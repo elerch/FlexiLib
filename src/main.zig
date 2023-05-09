@@ -135,7 +135,7 @@ pub fn main() !void {
     try stdout.print("Run `zig build test` to run the tests.\n", .{});
 
     try bw.flush(); // don't forget to flush!
-    const watcher_thread = try std.Thread.spawn(.{}, Watch.watchFds, .{&watcher});
+    const watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
     while (true) {
         std.time.sleep(std.time.ns_per_s * 2);
