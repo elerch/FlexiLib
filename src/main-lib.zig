@@ -5,7 +5,7 @@ export fn serve() void {
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
-    stdout.print(" 3 ", .{}) catch unreachable;
+    stdout.print(" 6 ", .{}) catch unreachable;
     bw.flush() catch unreachable;
 }
 

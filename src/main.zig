@@ -16,16 +16,49 @@ const Executor = struct {
     watch: ?usize = null,
 };
 
-var executors = [_]Executor{.{
-    .path = "/home/lobo/home/faas-proxy/zig-out/lib/libfaas-proxy-sample-lib.so",
-}};
+var executors = [_]Executor{
+    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib2.so" },
+    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib.so" },
+};
 
 var watcher = Watch.init(executorChanged);
+
+const log = std.log.scoped(.main);
+pub const std_options = struct {
+    // Set the log level to info
+    pub const log_level = .info;
+
+    // Define logFn to override the std implementation
+    pub const logFn = myLogFn;
+};
+
+pub fn myLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    // Ignore all non-error logging from sources other than
+    // .my_project, .nice_library and the default
+    switch (scope) {
+        .watch => if (@enumToInt(level) >= @enumToInt(std.log.Level.debug))
+            return, // Kill debug messages
+        else => {},
+    }
+
+    std.log.defaultLog(level, scope, format, args);
+}
 
 fn serve() !void {
     // if (some path routing thing) {
 
     (try getExecutor(0))();
+    if (inx > 4) {
+        if (inx % 2 == 0)
+            (try getExecutor(0))()
+        else
+            (try getExecutor(1))();
+    }
     // if (std.c.dlerror()) |_| { // TODO: use capture
     //     return error.CouldNotLoadSymbolServe;
     // }
@@ -44,10 +77,11 @@ fn getExecutor(key: usize) !serve_op {
         if (executor.library) |l| {
             break :blk l;
         }
+        log.info("library {s} requested but not loaded. Loading library", .{executor.path});
         const l = try dlopen(executor.path);
         errdefer if (std.c.dlclose(l) != 0)
             @panic("System unstable: Error after library open and cannot close");
-        executor.watch = try watcher.addFileWatch(executor.path);
+        executor.watch = executor.watch orelse try watcher.addFileWatch(executor.path);
         break :blk l;
     };
 
@@ -61,10 +95,12 @@ fn getExecutor(key: usize) !serve_op {
 
 // This works
 fn executorChanged(watch: usize) void {
+    log.debug("executor changed event", .{});
     for (&executors) |*executor| {
         if (executor.watch) |w| {
             if (w == watch) {
                 if (executor.library) |l| {
+                    log.info("library {s} changed. Unloading library", .{executor.path});
                     // TODO: These two lines could introduce a race. Right now that would mean a panic
                     executor.serve = null;
                     if (std.c.dlclose(l) != 0)
@@ -72,6 +108,8 @@ fn executorChanged(watch: usize) void {
                 }
                 executor.library = null;
                 executor.serve = null;
+                // NOTE: Would love to reload the library here, but that action
+                // does not seem to be thread safe
             }
         }
     }
@@ -118,6 +156,7 @@ fn dlopen(path: [:0]const u8) !*anyopaque {
     return error.CouldNotOpenDynamicLibrary;
 }
 
+var inx: usize = 0;
 pub fn main() !void {
     defer watcher.deinit();
 
@@ -139,6 +178,12 @@ pub fn main() !void {
 
     while (true) {
         std.time.sleep(std.time.ns_per_s * 2);
+        inx += 1;
+        if (inx == 10) {
+            log.debug("forcing stop to make sure it works", .{});
+            try watcher.stopWatch();
+            break;
+        }
         try stdout.print("Serving...", .{});
         try bw.flush();
         serve() catch |err| {
