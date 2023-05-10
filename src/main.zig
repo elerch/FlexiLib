@@ -26,28 +26,12 @@ var watcher = Watch.init(executorChanged);
 const log = std.log.scoped(.main);
 pub const std_options = struct {
     // Set the log level to info
-    pub const log_level = .info;
+    pub const log_level = .debug;
 
-    // Define logFn to override the std implementation
-    pub const logFn = myLogFn;
+    pub const log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .watch, .level = .info },
+    };
 };
-
-pub fn myLogFn(
-    comptime level: std.log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    // Ignore all non-error logging from sources other than
-    // .my_project, .nice_library and the default
-    switch (scope) {
-        .watch => if (@enumToInt(level) >= @enumToInt(std.log.Level.debug))
-            return, // Kill debug messages
-        else => {},
-    }
-
-    std.log.defaultLog(level, scope, format, args);
-}
 
 fn serve() !void {
     // if (some path routing thing) {
@@ -94,60 +78,60 @@ fn getExecutor(key: usize) !serve_op {
 }
 
 // This works
-fn executorChanged(watch: usize) void {
-    log.debug("executor changed event", .{});
-    for (&executors) |*executor| {
-        if (executor.watch) |w| {
-            if (w == watch) {
-                if (executor.library) |l| {
-                    log.info("library {s} changed. Unloading library", .{executor.path});
-                    // TODO: These two lines could introduce a race. Right now that would mean a panic
-                    executor.serve = null;
-                    if (std.c.dlclose(l) != 0)
-                        @panic("System unstable: Error after library open and cannot close");
-                }
-                executor.library = null;
-                executor.serve = null;
-                // NOTE: Would love to reload the library here, but that action
-                // does not seem to be thread safe
-            }
-        }
-    }
-}
-
-// NOTE: this will be on a different thread. This code does not work, and I
-// am fairly certain it is because we can't share a function pointer between
-// threads
 // fn executorChanged(watch: usize) void {
-//     std.debug.print("executor with watch {d} changed\n", .{watch});
+//     log.debug("executor changed event", .{});
 //     for (&executors) |*executor| {
 //         if (executor.watch) |w| {
 //             if (w == watch) {
 //                 if (executor.library) |l| {
-//                     std.debug.print("reloading executor at path: {s}\n", .{executor.path});
-//                     const newlib = dlopen(executor.path) catch {
-//                         std.debug.print("could not reload! error opening library\n", .{});
-//                         return;
-//                     };
-//                     errdefer if (std.c.dlclose(newlib) != 0)
-//                         @panic("System unstable: Error after library open and cannot close");
-//                     const serve_function = std.c.dlsym(newlib, "serve");
-//                     if (serve_function == null) {
-//                         std.debug.print("could not reload! error finding symbol\n", .{});
-//                         return;
-//                     }
-//                     // new lib all loaded up - do the swap and close the old
-//                     std.debug.print("updating function and library\n", .{});
-//                     executor.serve = @ptrCast(serve_op, serve_function.?);
-//                     executor.library = newlib;
+//                     log.info("library {s} changed. Unloading library", .{executor.path});
+//                     // TODO: These two lines could introduce a race. Right now that would mean a panic
+//                     executor.serve = null;
 //                     if (std.c.dlclose(l) != 0)
 //                         @panic("System unstable: Error after library open and cannot close");
-//                     std.debug.print("closed old library\n", .{});
 //                 }
+//                 executor.library = null;
+//                 executor.serve = null;
+//                 // NOTE: Would love to reload the library here, but that action
+//                 // does not seem to be thread safe
 //             }
 //         }
 //     }
 // }
+
+// NOTE: this will be on a different thread. This code does not work, and I
+// am fairly certain it is because we can't share a function pointer between
+// threads
+fn executorChanged(watch: usize) void {
+    log.debug("executor with watch {d} changed", .{watch});
+    for (&executors) |*executor| {
+        if (executor.watch) |w| {
+            if (w == watch) {
+                if (executor.library) |l| {
+                    log.debug("reloading executor at path: {s}", .{executor.path});
+                    const newlib = dlopen(executor.path) catch {
+                        log.warn("could not reload! error opening library", .{});
+                        return;
+                    };
+                    errdefer if (std.c.dlclose(newlib) != 0)
+                        @panic("System unstable: Error after library open and cannot close");
+                    const serve_function = std.c.dlsym(newlib, "serve");
+                    if (serve_function == null) {
+                        log.warn("could not reload! error finding symbol", .{});
+                        return;
+                    }
+                    // new lib all loaded up - do the swap and close the old
+                    log.debug("updating function and library", .{});
+                    executor.serve = @ptrCast(serve_op, serve_function.?);
+                    executor.library = newlib;
+                    if (std.c.dlclose(l) != 0)
+                        @panic("System unstable: Error after library open and cannot close");
+                    log.debug("closed old library", .{});
+                }
+            }
+        }
+    }
+}
 
 fn dlopen(path: [:0]const u8) !*anyopaque {
     // We need now (and local) because we're about to call it
