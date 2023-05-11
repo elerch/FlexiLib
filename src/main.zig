@@ -9,7 +9,7 @@ const timeout = 250;
 const Executor = struct {
     path: [:0]const u8,
     library: ?*anyopaque = null,
-    serve: ?serveFn = null,
+    serveFn: ?serveFn = null,
     watch: ?usize = null,
     reload_lock: bool = false,
 };
@@ -43,7 +43,7 @@ fn serve() !void {
 }
 fn getExecutor(key: usize) !serveFn {
     var executor = &executors[key];
-    if (executor.serve) |s| return s;
+    if (executor.serveFn) |s| return s;
 
     executor.library = blk: {
         if (executor.library) |l|
@@ -64,11 +64,11 @@ fn getExecutor(key: usize) !serveFn {
     };
 
     // std.c.dlerror();
-    const serve_function = std.c.dlsym(executor.library.?, SERVE_FN_NAME);
-    if (serve_function == null) return error.CouldNotLoadSymbolServe;
+    const serve_fn = std.c.dlsym(executor.library.?, SERVE_FN_NAME);
+    if (serve_fn == null) return error.CouldNotLoadSymbolServe;
 
-    executor.serve = @ptrCast(serveFn, serve_function.?);
-    return executor.serve.?;
+    executor.serveFn = @ptrCast(serveFn, serve_fn.?);
+    return executor.serveFn.?;
 }
 
 fn executorChanged(watch: usize) void {
@@ -88,8 +88,8 @@ fn executorChanged(watch: usize) void {
                         log.warn("could not reload! error opening library", .{});
                         return;
                     };
-                    executor.serve = @ptrCast(serveFn, std.c.dlsym(executor.library.?, SERVE_FN_NAME));
-                    if (executor.serve == null) {
+                    executor.serveFn = @ptrCast(serveFn, std.c.dlsym(executor.library.?, SERVE_FN_NAME));
+                    if (executor.serveFn == null) {
                         log.warn("could not reload! error finding symbol", .{});
                         if (std.c.dlclose(executor.library.?) != 0)
                             @panic("System unstable: Error after library open and cannot close");
