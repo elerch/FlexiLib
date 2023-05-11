@@ -70,10 +70,6 @@ pub fn startWatch(self: *Self) void {
     std.debug.assert(self.control_socket != null);
 
     while (true) {
-        if (self.nfds_t == 0) {
-            std.time.sleep(250);
-            continue;
-        }
         self.watch_started = true;
 
         var fds = if (self.inotify_fd == null)

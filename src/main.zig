@@ -1,9 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Watch = @import("Watch.zig");
 const serveFn = *const fn () void;
 
-var shutdown = false;
 const timeout = 250;
 
 const Executor = struct {
@@ -20,6 +20,8 @@ var executors = [_]Executor{
 };
 
 var watcher = Watch.init(executorChanged);
+var watcher_thread: ?std.Thread = null;
+
 const log = std.log.scoped(.main);
 pub const std_options = struct {
     pub const log_level = .debug;
@@ -29,6 +31,7 @@ pub const std_options = struct {
     };
 };
 const SERVE_FN_NAME = "serve";
+const PORT = 8069;
 
 fn serve() !void {
     // if (some path routing thing) {
@@ -108,9 +111,30 @@ fn dlopen(path: [:0]const u8) !*anyopaque {
     return error.CouldNotOpenDynamicLibrary;
 }
 
-var inx: usize = 0;
+// fn exitApplication(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const anyopaque,) callconv(.C) noreturn {
+fn exitApplication(
+    _: i32,
+    _: *const std.os.siginfo_t,
+    _: ?*const anyopaque,
+) callconv(.C) noreturn {
+    exitApp();
+    std.os.exit(0);
+}
+
+fn exitApp() void {
+    std.io.getStdOut().writer().print("termination request: stopping watch\n", .{}) catch {};
+    watcher.stopWatch() catch @panic("could not stop watcher");
+    std.io.getStdOut().writer().print("exiting application\n", .{}) catch {};
+    watcher.deinit();
+    // joining threads will hang...we're ultimately in a signal handler.
+    // But everything is shut down cleanly now, so I don't think it hurts to
+    // just kill it all
+    // if (watcher_thread) |t|
+    //     t.join();
+}
+
 pub fn main() !void {
-    defer watcher.deinit();
+    defer exitApp();
 
     // stdout is for the actual output of your application, for example if you
     // are implementing gzip, then only the compressed bytes should be sent to
@@ -122,32 +146,55 @@ pub fn main() !void {
     const stderr_file = std.io.getStdErr().writer();
     var bw_stderr = std.io.bufferedWriter(stderr_file);
     const stderr = bw_stderr.writer();
+    _ = stderr;
 
     try stdout.print("Run `zig build test` to run the tests.\n", .{});
 
     try bw.flush(); // don't forget to flush!
-    const watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
+    watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
+    const max_header_size = 8192;
+    var allocator = std.heap.c_allocator;
+    var server = std.http.Server.init(allocator, .{ .reuse_address = true });
+    defer server.deinit();
+
+    const address = try std.net.Address.parseIp("0.0.0.0", PORT);
+    try server.listen(address);
+    const server_port = server.socket.listen_address.in.getPort();
+    log.info("listening on port: {d}", .{server_port});
+    if (builtin.os.tag == .linux)
+        log.info("pid: {d}", .{std.os.linux.getpid()});
+    // install signal handler
+    var act = std.os.Sigaction{
+        .handler = .{ .sigaction = exitApplication },
+        .mask = std.os.empty_sigset,
+        .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
+    };
+
+    try std.os.sigaction(std.os.SIG.INT, &act, null);
+    try std.os.sigaction(std.os.SIG.TERM, &act, null);
     while (true) {
-        std.time.sleep(std.time.ns_per_s * 2);
-        inx += 1;
-        if (inx == 10) {
-            log.debug("forcing stop to make sure it works", .{});
-            try watcher.stopWatch();
-            break;
-        }
-        try stdout.print("Serving...", .{});
-        try bw.flush();
-        serve() catch |err| {
-            try stderr.print("Error serving request ({any})\n", .{err});
-            try bw_stderr.flush();
-        };
-        try stdout.print("served\n", .{});
-        try bw.flush();
+        var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+        defer arena.deinit();
+        const res = try server.accept(.{ .dynamic = max_header_size });
+        defer res.deinit();
+        defer res.reset();
+        try res.wait();
+
+        const server_body: []const u8 = "message from server!\n";
+        res.transfer_encoding = .{ .content_length = server_body.len };
+        try res.headers.append("content-type", "text/plain");
+        try res.headers.append("connection", "close");
+        try res.do();
+
+        var buf: [128]u8 = undefined;
+        const n = try res.readAll(&buf);
+        _ = n;
+        _ = try res.writer().writeAll(server_body);
+        try res.finish();
     }
-    shutdown = true;
-    watcher_thread.join();
 }
+
 test {
     // To run nested container tests, either, call `refAllDecls` which will
     // reference all declarations located in the given argument.
