@@ -72,6 +72,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    main_tests.linkLibC();
+
     const lib_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main-lib.zig" },
         .target = target,

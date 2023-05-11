@@ -1,10 +1,7 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("dlfcn.h");
-});
 
 const Watch = @import("Watch.zig");
-const serve_op = *const fn () void;
+const serveFn = *const fn () void;
 
 var shutdown = false;
 const timeout = 250;
@@ -12,121 +9,92 @@ const timeout = 250;
 const Executor = struct {
     path: [:0]const u8,
     library: ?*anyopaque = null,
-    serve: ?serve_op = null,
+    serve: ?serveFn = null,
     watch: ?usize = null,
+    reload_lock: bool = false,
 };
 
 var executors = [_]Executor{
-    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib2.so" },
     .{ .path = "zig-out/lib/libfaas-proxy-sample-lib.so" },
+    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib2.so" },
 };
 
 var watcher = Watch.init(executorChanged);
-
 const log = std.log.scoped(.main);
 pub const std_options = struct {
-    // Set the log level to info
     pub const log_level = .debug;
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .watch, .level = .info },
     };
 };
+const SERVE_FN_NAME = "serve";
 
 fn serve() !void {
     // if (some path routing thing) {
 
     (try getExecutor(0))();
-    if (inx > 4) {
-        if (inx % 2 == 0)
-            (try getExecutor(0))()
-        else
-            (try getExecutor(1))();
-    }
-    // if (std.c.dlerror()) |_| { // TODO: use capture
-    //     return error.CouldNotLoadSymbolServe;
-    // }
-    // TODO: only close on reload
-    // if (std.c.dlclose(library.?) != 0) {
-    //     return error.CouldNotUnloadLibrary;
-    // }
-    // library = null;
+    // if (inx > 4) {
+    //     if (inx % 2 == 0)
+    //         (try getExecutor(0))()
+    //     else
+    //         (try getExecutor(1))();
     // }
 }
-fn getExecutor(key: usize) !serve_op {
+fn getExecutor(key: usize) !serveFn {
     var executor = &executors[key];
     if (executor.serve) |s| return s;
 
     executor.library = blk: {
-        if (executor.library) |l| {
+        if (executor.library) |l|
             break :blk l;
-        }
+
+        while (executor.reload_lock) // system is reloading the library
+            std.time.sleep(1);
+
+        if (executor.library) |l| // check again to see where we are at
+            break :blk l;
+
         log.info("library {s} requested but not loaded. Loading library", .{executor.path});
         const l = try dlopen(executor.path);
         errdefer if (std.c.dlclose(l) != 0)
             @panic("System unstable: Error after library open and cannot close");
-        executor.watch = executor.watch orelse try watcher.addFileWatch(executor.path);
+        executor.watch = executor.watch orelse try watcher.addFileWatch(&executor.path);
         break :blk l;
     };
 
     // std.c.dlerror();
-    const serve_function = std.c.dlsym(executor.library.?, "serve");
+    const serve_function = std.c.dlsym(executor.library.?, SERVE_FN_NAME);
     if (serve_function == null) return error.CouldNotLoadSymbolServe;
 
-    executor.serve = @ptrCast(serve_op, serve_function.?);
+    executor.serve = @ptrCast(serveFn, serve_function.?);
     return executor.serve.?;
 }
 
-// This works
-// fn executorChanged(watch: usize) void {
-//     log.debug("executor changed event", .{});
-//     for (&executors) |*executor| {
-//         if (executor.watch) |w| {
-//             if (w == watch) {
-//                 if (executor.library) |l| {
-//                     log.info("library {s} changed. Unloading library", .{executor.path});
-//                     // TODO: These two lines could introduce a race. Right now that would mean a panic
-//                     executor.serve = null;
-//                     if (std.c.dlclose(l) != 0)
-//                         @panic("System unstable: Error after library open and cannot close");
-//                 }
-//                 executor.library = null;
-//                 executor.serve = null;
-//                 // NOTE: Would love to reload the library here, but that action
-//                 // does not seem to be thread safe
-//             }
-//         }
-//     }
-// }
-
-// NOTE: this will be on a different thread. This code does not work, and I
-// am fairly certain it is because we can't share a function pointer between
-// threads
 fn executorChanged(watch: usize) void {
+    // NOTE: This will be called off the main thread
     log.debug("executor with watch {d} changed", .{watch});
     for (&executors) |*executor| {
         if (executor.watch) |w| {
             if (w == watch) {
                 if (executor.library) |l| {
-                    log.debug("reloading executor at path: {s}", .{executor.path});
-                    const newlib = dlopen(executor.path) catch {
+                    executor.reload_lock = true;
+                    defer executor.reload_lock = false;
+
+                    if (std.c.dlclose(l) != 0)
+                        @panic("System unstable: Error after library open and cannot close");
+                    log.debug("closed old library. reloading executor at: {s}", .{executor.path});
+                    executor.library = dlopen(executor.path) catch {
                         log.warn("could not reload! error opening library", .{});
                         return;
                     };
-                    errdefer if (std.c.dlclose(newlib) != 0)
-                        @panic("System unstable: Error after library open and cannot close");
-                    const serve_function = std.c.dlsym(newlib, "serve");
-                    if (serve_function == null) {
+                    executor.serve = @ptrCast(serveFn, std.c.dlsym(executor.library.?, SERVE_FN_NAME));
+                    if (executor.serve == null) {
                         log.warn("could not reload! error finding symbol", .{});
+                        if (std.c.dlclose(executor.library.?) != 0)
+                            @panic("System unstable: Error after library open and cannot close");
                         return;
                     }
-                    // new lib all loaded up - do the swap and close the old
-                    log.debug("updating function and library", .{});
-                    executor.serve = @ptrCast(serve_op, serve_function.?);
-                    executor.library = newlib;
-                    if (std.c.dlclose(l) != 0)
-                        @panic("System unstable: Error after library open and cannot close");
-                    log.debug("closed old library", .{});
                 }
             }
         }
@@ -135,7 +103,7 @@ fn executorChanged(watch: usize) void {
 
 fn dlopen(path: [:0]const u8) !*anyopaque {
     // We need now (and local) because we're about to call it
-    const lib = std.c.dlopen(path, c.RTLD_NOW);
+    const lib = std.c.dlopen(path, std.c.RTLD.NOW);
     if (lib) |l| return l;
     return error.CouldNotOpenDynamicLibrary;
 }
@@ -180,7 +148,13 @@ pub fn main() !void {
     shutdown = true;
     watcher_thread.join();
 }
-
+test {
+    // To run nested container tests, either, call `refAllDecls` which will
+    // reference all declarations located in the given argument.
+    // `@This()` is a builtin function that returns the innermost container it is called from.
+    // In this example, the innermost container is this file (implicitly a struct).
+    std.testing.refAllDecls(@This());
+}
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
     defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
