@@ -219,8 +219,7 @@ pub fn main() !void {
     try bw.flush(); // don't forget to flush!
     watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
-    const max_header_size = 8192;
-    var allocator = std.heap.c_allocator;
+    var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
     var server = std.http.Server.init(allocator, .{ .reuse_address = true });
     defer server.deinit();
 
