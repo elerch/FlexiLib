@@ -210,6 +210,9 @@ fn processInotifyEvent(self: Self, ev: *const std.os.linux.inotify_event, name_p
     }
     if (ev.mask & std.os.linux.IN.MOVED_TO == std.os.linux.IN.MOVED_TO) {
         // This mem.span makes me deeply uncomfortable, but is how fs.watch does it
+        // TODO: This should be a std.mem.sliceTo(@ptrCast([*:0]u8, name_ptr), ev.len);
+        // and returning from C without a sentinal, we can use the same call, like this:
+        // std.mem.sliceTo(@ptrCast([*]u8, name_ptr), len);
         const name = std.mem.span(@ptrCast([*:0]u8, name_ptr));
         log.debug("MOVED_TO({d}/{d}): {s}", .{ name.len, ev.len, name });
         for (self.dir_wds) |dir| {
@@ -334,6 +337,10 @@ fn sendControl(self: Self, control: u8) !void {
 /// creates a control socket. This allows for managing the watcher. With it,
 /// you can gracefully terminate the process and you can add files after the fact
 fn addControlSocket(self: *Self, path: [:0]const u8) !void {
+    // TODO: I now believe std.net.StreamServer will handle a lot of these details for us.
+    // something like: var server = std.net.StreamServer.init(.{ ... }); server.listen(.{...});
+    // and use server.sockfd.? as my control socket
+    //
     // This function theoretically should work without requiring linux...except this inotify call,
     // which is completely linux specific
     self.inotify_fd = self.inotify_fd orelse try std.os.inotify_init1(std.os.linux.IN.NONBLOCK);
