@@ -46,7 +46,6 @@ pub const std_options = struct {
 const SERVE_FN_NAME = "handle_request";
 const PORT = 8069;
 
-// TODO: writer as anytype is not going to survive across library boundaries...
 fn serve(allocator: std.mem.Allocator, response: *std.http.Server.Response) !*FullReturn {
     var null_server = std.http.Server.init(allocator, .{});
     defer null_server.deinit();
@@ -286,9 +285,52 @@ fn processRequest(allocator: std.mem.Allocator, server: *std.http.Server) !void 
     res.transfer_encoding = .{ .content_length = response_bytes.len };
     try res.headers.append("content-type", "text/plain");
     try res.headers.append("connection", "close");
+    if (builtin.is_test) writeToTestBuffers(response_bytes, res);
     try res.do();
     _ = try res.writer().writeAll(response_bytes);
     try res.finish();
+}
+
+fn writeToTestBuffers(response: []const u8, res: *std.http.Server.Response) void {
+    _ = res;
+    log.debug("writing to test buffers", .{});
+    // This performs core dump...because we're in a separate thread?
+    // @memset(test_resp_buf, 0);
+    const errmsg = "response exceeds 1024 bytes";
+    const src = if (response.len < 1024) response else errmsg;
+    test_resp_buf_len = if (response.len < 1024) response.len else errmsg.len;
+    for (src, 0..) |b, i| {
+        test_resp_buf[i] = b;
+    }
+    for (test_resp_buf_len..1024) |i| test_resp_buf[i] = 0;
+}
+fn testRequest(request_bytes: []const u8) !void {
+    const allocator = std.testing.allocator;
+
+    var server = std.http.Server.init(allocator, .{ .reuse_address = true });
+    defer server.deinit();
+
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    try server.listen(address);
+    const server_port = server.socket.listen_address.in.getPort();
+
+    const server_thread = try std.Thread.spawn(
+        .{},
+        processRequest,
+        .{ allocator, &server },
+    );
+
+    const stream = try std.net.tcpConnectToHost(allocator, "127.0.0.1", server_port);
+    defer stream.close();
+    _ = try stream.writeAll(request_bytes[0..]);
+
+    server_thread.join();
+}
+
+fn testGet(comptime path: []const u8) !void {
+    try testRequest("GET " ++ path ++ " HTTP/1.1\r\n" ++
+        "Accept: */*\r\n" ++
+        "\r\n");
 }
 
 test {
@@ -298,9 +340,11 @@ test {
     // In this example, the innermost container is this file (implicitly a struct).
     std.testing.refAllDecls(@This());
 }
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+var test_resp_buf: [1024]u8 = undefined;
+var test_resp_buf_len: usize = undefined;
+test "root path get" {
+    // std.testing.log_level = .debug;
+    try testGet("/");
+    try std.testing.expectEqual(@as(usize, 3), test_resp_buf_len);
+    try std.testing.expectEqualStrings(" 2.", test_resp_buf[0..test_resp_buf_len]);
 }

@@ -80,6 +80,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib_tests.linkLibC();
 
     const run_main_tests = b.addRunArtifact(main_tests);
     const run_lib_tests = b.addRunArtifact(lib_tests);
