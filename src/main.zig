@@ -168,24 +168,39 @@ fn exitApplication(
     _: *const std.os.siginfo_t,
     _: ?*const anyopaque,
 ) callconv(.C) noreturn {
-    exitApp();
+    exitApp(0);
     std.os.exit(0);
 }
 
-fn exitApp() void {
-    std.io.getStdOut().writer().print("termination request: stopping watch\n", .{}) catch {};
+fn exitApp(exitcode: u8) void {
+    if (exitcode == 0)
+        std.io.getStdOut().writer().print("termination request: stopping watch\n", .{}) catch {}
+    else
+        std.io.getStdErr().writer().print("abnormal termination: stopping watch\n", .{}) catch {};
+
     watcher.stopWatch() catch @panic("could not stop watcher");
     std.io.getStdOut().writer().print("exiting application\n", .{}) catch {};
     watcher.deinit();
+    std.os.exit(exitcode);
     // joining threads will hang...we're ultimately in a signal handler.
     // But everything is shut down cleanly now, so I don't think it hurts to
     // just kill it all
     // if (watcher_thread) |t|
     //     t.join();
 }
+fn installSignalHandler() !void {
+    var act = std.os.Sigaction{
+        .handler = .{ .sigaction = exitApplication },
+        .mask = std.os.empty_sigset,
+        .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
+    };
+
+    try std.os.sigaction(std.os.SIG.INT, &act, null);
+    try std.os.sigaction(std.os.SIG.TERM, &act, null);
+}
 
 pub fn main() !void {
-    defer exitApp();
+    defer exitApp(1);
 
     // stdout is for the actual output of your application, for example if you
     // are implementing gzip, then only the compressed bytes should be sent to
