@@ -1,16 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-
+const interface = @import("interface.zig");
 const Watch = @import("Watch.zig");
-const serveFn = *const fn () *ServeReturn;
+const serveFn = *const fn () ?*interface.Response;
 const requestDeinitFn = *const fn () void;
 
 const timeout = 250;
-
-const ServeReturn = extern struct {
-    ptr: [*]u8,
-    len: usize,
-};
 
 const FullReturn = struct {
     response: []u8,
@@ -18,15 +13,22 @@ const FullReturn = struct {
 };
 
 const Executor = struct {
+    // configuration
     path: [:0]const u8,
+
+    // fields used at runtime to do real work
     library: ?*anyopaque = null,
     serveFn: ?serveFn = null,
     requestDeinitFn: ?requestDeinitFn = null,
+
+    // fields used for internal accounting
     watch: ?usize = null,
     reload_lock: bool = false,
     in_request_lock: bool = false,
 };
 
+// TODO: This should be in a file that maybe gets reloaded with SIGHUP
+// rather than a file watch. Touching this config is pretty dangerous
 var executors = [_]Executor{
     .{ .path = "zig-out/lib/libfaas-proxy-sample-lib.so" },
     .{ .path = "zig-out/lib/libfaas-proxy-sample-lib2.so" },
@@ -47,25 +49,16 @@ const SERVE_FN_NAME = "handle_request";
 const PORT = 8069;
 
 fn serve(allocator: std.mem.Allocator, response: *std.http.Server.Response) !*FullReturn {
-    var null_server = std.http.Server.init(allocator, .{});
-    defer null_server.deinit();
-    var data: [14]u8 = @constCast(&[_]u8{0x00} ** 14).*;
-    var child_response = std.http.Server.Response{
-        .server = &null_server,
-        .request = response.request,
-        .connection = .{
-            .conn = .{
-                .stream = .{ .handle = 0 },
-                .protocol = .plain,
-            },
-        },
-        .address = .{ .any = .{
-            .data = data,
-            .family = 0,
-        } },
-        .headers = response.headers,
-    };
-    _ = child_response;
+    // pub const Request = extern struct {
+    //     method: [*]u8,
+    //     method_len: usize,
+    //
+    //     content: [*]u8,
+    //     content_len: usize,
+    //
+    //     headers: [*]Header,
+    //     headers_len: usize,
+    // };
     // if (some path routing thing) {
     // TODO: Get request body into executor
     // TODO: Get headers back from executor
@@ -74,14 +67,27 @@ fn serve(allocator: std.mem.Allocator, response: *std.http.Server.Response) !*Fu
     executor.in_request_lock = true;
     errdefer executor.in_request_lock = false;
     // Call external library
-    var serve_result = executor.serveFn.?();
+    var serve_result = executor.serveFn.?().?; // ok for this pointer deref to fail
 
     // Deal with results
+    // var content_type_added = false;
+    // for (0..serve_result.headers_len) |inx| {
+    //     const head = serve_result.headers[inx];
+    //     try response.headers.append(
+    //         head.name_ptr[0..head.name_len],
+    //         head.value_ptr[0..head.value_len],
+    //     );
+    //
+    //     // TODO: are these headers case insensitive?
+    //     content_type_added = std.mem.eql(u8, head.name_ptr[0..head.name_len], "content-type");
+    // }
+    // if (!content_type_added)
+    //     try response.headers.append("content-type", "text/plain");
+    _ = response;
     var slice: []u8 = serve_result.ptr[0..serve_result.len];
-    var rc = &FullReturn{
-        .executor = executor,
-        .response = slice,
-    };
+    var rc = try allocator.create(FullReturn);
+    rc.executor = executor;
+    rc.response = slice;
     return rc;
 }
 fn getExecutor(key: usize) !*Executor {
@@ -231,7 +237,7 @@ pub fn main() !void {
 
     try installSignalHandler();
     while (true) {
-        var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
 
         processRequest(arena.allocator(), &server) catch |e| {
@@ -283,7 +289,6 @@ fn processRequest(allocator: std.mem.Allocator, server: *std.http.Server) !void 
     if (full_response) |f|
         response_bytes = f.response;
     res.transfer_encoding = .{ .content_length = response_bytes.len };
-    try res.headers.append("content-type", "text/plain");
     try res.headers.append("connection", "close");
     if (builtin.is_test) writeToTestBuffers(response_bytes, res);
     try res.do();
@@ -306,6 +311,8 @@ fn writeToTestBuffers(response: []const u8, res: *std.http.Server.Response) void
 }
 fn testRequest(request_bytes: []const u8) !void {
     const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
     var server = std.http.Server.init(allocator, .{ .reuse_address = true });
     defer server.deinit();
@@ -317,7 +324,7 @@ fn testRequest(request_bytes: []const u8) !void {
     const server_thread = try std.Thread.spawn(
         .{},
         processRequest,
-        .{ allocator, &server },
+        .{ arena.allocator(), &server },
     );
 
     const stream = try std.net.tcpConnectToHost(allocator, "127.0.0.1", server_port);
