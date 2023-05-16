@@ -30,20 +30,21 @@ export fn handle_request() ?*interface.Response {
         }
         return null;
     };
-    // Marshall data back for handling by server
-    var rc = &interface.Response{
-        .ptr = response.items.ptr,
-        .len = response.items.len,
 
-        .headers = interface.toHeaders(allocator, headers) catch |e| {
-            log.err("Unexpected error processing request: {any}", .{e});
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-            return null;
-        },
-        .headers_len = headers.count(),
+    log.debug("response ptr: {*}", .{response.items.ptr});
+    // Marshall data back for handling by server
+
+    var rc = allocator.create(interface.Response) catch @panic("OOM");
+    rc.ptr = response.items.ptr;
+    rc.len = response.items.len;
+    rc.headers = interface.toHeaders(allocator, headers) catch |e| {
+        log.err("Unexpected error processing request: {any}", .{e});
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+        return null;
     };
+    rc.headers_len = headers.count();
     return rc;
 }
 
@@ -64,6 +65,7 @@ fn handleRequest(response: Response) !void {
     // real work
     response_writer.print(" 2.", .{}) catch unreachable;
     try response.headers.put("X-custom-foo", "bar");
+    log.info("handlerequest header count {d}", .{response.headers.count()});
 }
 
 test "handle_request" {

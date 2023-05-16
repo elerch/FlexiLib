@@ -68,23 +68,27 @@ fn serve(allocator: std.mem.Allocator, response: *std.http.Server.Response) !*Fu
     errdefer executor.in_request_lock = false;
     // Call external library
     var serve_result = executor.serveFn.?().?; // ok for this pointer deref to fail
+    log.debug("target: {s}", .{response.request.target});
+    log.warn("response ptr: {*}", .{serve_result.ptr}); // BUG: This works in tests, but does not when compiled (even debug mode)
+    var slice: []u8 = serve_result.ptr[0..serve_result.len];
+    log.debug("response body: {s}", .{slice});
 
     // Deal with results
-    // var content_type_added = false;
-    // for (0..serve_result.headers_len) |inx| {
-    //     const head = serve_result.headers[inx];
-    //     try response.headers.append(
-    //         head.name_ptr[0..head.name_len],
-    //         head.value_ptr[0..head.value_len],
-    //     );
-    //
-    //     // TODO: are these headers case insensitive?
-    //     content_type_added = std.mem.eql(u8, head.name_ptr[0..head.name_len], "content-type");
-    // }
-    // if (!content_type_added)
-    //     try response.headers.append("content-type", "text/plain");
-    _ = response;
-    var slice: []u8 = serve_result.ptr[0..serve_result.len];
+    var content_type_added = false;
+    for (0..serve_result.headers_len) |inx| {
+        const head = serve_result.headers[inx];
+        // head.name_ptr[0..head.name_len],
+        try response.headers.append(
+            head.name_ptr[0..head.name_len],
+            head.value_ptr[0..head.value_len],
+        );
+
+        // TODO: are these headers case insensitive?
+        content_type_added = std.mem.eql(u8, head.name_ptr[0..head.name_len], "content-type");
+    }
+    if (!content_type_added)
+        try response.headers.append("content-type", "text/plain");
+    // target is path
     var rc = try allocator.create(FullReturn);
     rc.executor = executor;
     rc.response = slice;
@@ -350,7 +354,8 @@ test {
 var test_resp_buf: [1024]u8 = undefined;
 var test_resp_buf_len: usize = undefined;
 test "root path get" {
-    // std.testing.log_level = .debug;
+    std.testing.log_level = .debug;
+    log.debug("", .{});
     try testGet("/");
     try std.testing.expectEqual(@as(usize, 3), test_resp_buf_len);
     try std.testing.expectEqualStrings(" 2.", test_resp_buf[0..test_resp_buf_len]);
