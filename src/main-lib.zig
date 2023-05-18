@@ -18,6 +18,8 @@ export fn zigInit(parent_allocator: *anyopaque) void {
     allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
 }
 export fn handle_request() ?*interface.Response {
+    // TODO: implement another library in C or Rust or something to show
+    // that anything using a C ABI can be successful
     var alloc = if (allocator) |a| a.* else @panic("zigInit not called prior to handle_request. This is a coding error");
 
     // setup response body
@@ -59,7 +61,7 @@ export fn handle_request() ?*interface.Response {
 // }
 
 // ************************************************************************
-// Boilerplate ^^, Custom code below
+// Boilerplate ^^, Custom code vv
 // ************************************************************************
 //
 // handleRequest function here is the last line of boilerplate and the
