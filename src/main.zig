@@ -230,14 +230,6 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
-    const stderr_file = std.io.getStdErr().writer();
-    var bw_stderr = std.io.bufferedWriter(stderr_file);
-    const stderr = bw_stderr.writer();
-    _ = stderr;
-
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // don't forget to flush!
     watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
     var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
@@ -257,7 +249,6 @@ pub fn main() !void {
     var aa = arena.allocator();
     const bytes_preallocated = try preWarmArena(aa, &arena, 1);
     while (true) {
-        // TODO: Learn what is typical and change this to .retain_with_limit = <value>
         defer {
             if (!arena.reset(.{ .retain_capacity = {} })) {
                 // reallocation failed, arena is degraded
@@ -299,12 +290,6 @@ fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, write
         res.request.target,
         @tagName(res.request.version),
     });
-    // TODO: we need to also have a defer statement to deinit whatever happens
-    // with the executor library. This will also add a race condition where
-    // we could have a memory leak if the executor reloads in the middle of a
-    // request. We may want to add a new spinlock on the reload thread to
-    // avoid reloading in the middle of a request, which would be generally
-    // bad anyway
     const errstr = "Internal Server Error\n";
     var errbuf: [errstr.len]u8 = undefined;
     var response_bytes = try std.fmt.bufPrint(&errbuf, errstr, .{});
