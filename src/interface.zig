@@ -16,7 +16,7 @@ pub const Response = extern struct {
 };
 
 pub const Request = extern struct {
-    method: [*]u8,
+    method: [*:0]u8,
     method_len: usize,
 
     content: [*]u8,

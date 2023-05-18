@@ -3,23 +3,28 @@ const interface = @import("interface.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.@"main-lib");
-var child_allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
-var arena: std.heap.ArenaAllocator = undefined;
 
+var allocator: ?*std.mem.Allocator = null;
 const Response = struct {
     body: *std.ArrayList(u8),
     headers: *std.StringHashMap([]const u8),
 };
 
+/// This function is optional and can be exported by zig libraries for
+/// initialization. If exported, it will be called once in the beginning of
+/// a request and will be provided a pointer to std.mem.Allocator, which is
+/// useful for reusing the parent allocator
+export fn zigInit(parent_allocator: *anyopaque) void {
+    allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
+}
 export fn handle_request() ?*interface.Response {
-    arena = std.heap.ArenaAllocator.init(child_allocator);
-    var allocator = arena.allocator();
+    var alloc = if (allocator) |a| a.* else @panic("zigInit not called prior to handle_request. This is a coding error");
 
     // setup response body
-    var response = std.ArrayList(u8).init(allocator);
+    var response = std.ArrayList(u8).init(alloc);
 
     // setup headers
-    var headers = std.StringHashMap([]const u8).init(allocator);
+    var headers = std.StringHashMap([]const u8).init(alloc);
     handleRequest(.{
         .body = &response,
         .headers = &headers,
@@ -34,10 +39,10 @@ export fn handle_request() ?*interface.Response {
     log.debug("response ptr: {*}", .{response.items.ptr});
     // Marshall data back for handling by server
 
-    var rc = allocator.create(interface.Response) catch @panic("OOM");
+    var rc = alloc.create(interface.Response) catch @panic("OOM");
     rc.ptr = response.items.ptr;
     rc.len = response.items.len;
-    rc.headers = interface.toHeaders(allocator, headers) catch |e| {
+    rc.headers = interface.toHeaders(alloc, headers) catch |e| {
         log.err("Unexpected error processing request: {any}", .{e});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpStackTrace(trace.*);
@@ -48,10 +53,10 @@ export fn handle_request() ?*interface.Response {
     return rc;
 }
 
-/// having request_deinit allows for a general deinit as well
-export fn request_deinit() void {
-    arena.deinit();
-}
+/// request_deinit is an optional export and will be called a the end of the
+/// request. Useful for deallocating memory
+// export fn request_deinit() void {
+// }
 
 // ************************************************************************
 // Boilerplate ^^, Custom code below
@@ -69,8 +74,10 @@ fn handleRequest(response: Response) !void {
 }
 
 test "handle_request" {
-    defer request_deinit();
-    child_allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var aa = arena.allocator();
+    allocator = &aa;
     const response = handle_request().?;
     try testing.expectEqualStrings(" 2.", response.ptr[0..response.len]);
     try testing.expectEqualStrings("X-custom-foo", response.headers[0].name_ptr[0..response.headers[0].name_len]);
