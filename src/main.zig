@@ -2,10 +2,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const interface = @import("interface.zig");
 const Watch = @import("Watch.zig");
+const config = @import("config.zig");
+
 const serveFn = *const fn (*interface.Request) ?*interface.Response;
 const zigInitFn = *const fn (*anyopaque) void;
 const requestDeinitFn = *const fn () void;
-
 const timeout = 250;
 
 const FullReturn = struct {
@@ -414,6 +415,8 @@ test {
     // `@This()` is a builtin function that returns the innermost container it is called from.
     // In this example, the innermost container is this file (implicitly a struct).
     std.testing.refAllDecls(@This());
+    std.testing.refAllDecls(config);
+    std.testing.refAllDecls(interface);
 }
 var test_resp_buf: [1024]u8 = undefined;
 var test_resp_buf_len: usize = undefined;
