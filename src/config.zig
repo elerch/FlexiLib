@@ -4,18 +4,18 @@ const std = @import("std");
 allocator: std.mem.Allocator,
 
 pub const ParsedConfig = struct {
-    key_value_map: *std.StringArrayHashMap([]u8),
-    value_key_map: *std.StringArrayHashMap(*std.ArrayList([]u8)),
+    key_value_map: *std.StringArrayHashMap([:0]u8),
+    value_key_map: *std.StringArrayHashMap(*std.ArrayList([:0]u8)),
 
     config_allocator: std.mem.Allocator,
     const SelfConfig = @This();
 
-    var by_keys: std.StringArrayHashMap([]u8) = undefined;
-    var by_values: std.StringArrayHashMap(*std.ArrayList([]u8)) = undefined;
+    var by_keys: std.StringArrayHashMap([:0]u8) = undefined;
+    var by_values: std.StringArrayHashMap(*std.ArrayList([:0]u8)) = undefined;
 
     pub fn init(config_allocator: std.mem.Allocator) SelfConfig {
-        by_keys = std.StringArrayHashMap([]u8).init(config_allocator);
-        by_values = std.StringArrayHashMap(*std.ArrayList([]u8)).init(config_allocator);
+        by_keys = std.StringArrayHashMap([:0]u8).init(config_allocator);
+        by_values = std.StringArrayHashMap(*std.ArrayList([:0]u8)).init(config_allocator);
         return SelfConfig{
             .config_allocator = config_allocator,
             .key_value_map = &by_keys,
@@ -25,7 +25,8 @@ pub const ParsedConfig = struct {
 
     pub fn deinit(self: *SelfConfig) void {
         for (self.key_value_map.keys(), self.key_value_map.values()) |k, v| {
-            self.config_allocator.free(k); // this is also the key in value_key_map
+            // StringArrayHashMap assumes []const u8, but what we've allocated is null terminated
+            self.config_allocator.free(@ptrCast([:0]const u8, k)); // this is also the key in value_key_map
             self.config_allocator.free(v);
         }
 
@@ -70,12 +71,12 @@ pub fn parse(self: Self, reader: anytype) !ParsedConfig {
         // keys should be putNoClobber, but values can be put.
         // Because we have to dup the memory here though, we want to
         // manage duplicate values seperately
-        var dup_key = try self.allocator.dupe(u8, key);
-        var dup_value = try self.allocator.dupe(u8, value);
+        var dup_key = try self.allocator.dupeZ(u8, key);
+        var dup_value = try self.allocator.dupeZ(u8, value);
         try rc.key_value_map.putNoClobber(dup_key, dup_value);
         if (!rc.value_key_map.contains(value)) {
-            var keys = try self.allocator.create(std.ArrayList([]u8));
-            keys.* = std.ArrayList([]u8).init(self.allocator);
+            var keys = try self.allocator.create(std.ArrayList([:0]u8));
+            keys.* = std.ArrayList([:0]u8).init(self.allocator);
             try rc.value_key_map.put(dup_value, keys);
         }
         try rc.value_key_map.get(value).?.append(dup_key);

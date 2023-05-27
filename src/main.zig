@@ -16,6 +16,7 @@ const FullReturn = struct {
 
 const Executor = struct {
     // configuration
+    target_prefix: []const u8,
     path: [:0]const u8,
 
     // fields used at runtime to do real work
@@ -28,13 +29,6 @@ const Executor = struct {
     watch: ?usize = null,
     reload_lock: bool = false,
     in_request_lock: bool = false,
-};
-
-// TODO: This should be in a file that maybe gets reloaded with SIGHUP
-// rather than a file watch. Touching this config is pretty dangerous
-var executors = [_]Executor{
-    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib.so" },
-    .{ .path = "zig-out/lib/libfaas-proxy-sample-lib2.so" },
 };
 
 var watcher = Watch.init(executorChanged);
@@ -52,9 +46,11 @@ pub const std_options = struct {
 const SERVE_FN_NAME = "handle_request";
 const PORT = 8069;
 
+var executors: []Executor = undefined;
+
 fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*FullReturn {
     // if (some path routing thing) {
-    const executor = try getExecutor(0);
+    const executor = try getExecutor(response.request.target);
     if (executor.zigInitFn) |f|
         f(allocator);
 
@@ -104,8 +100,16 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     rc.response = slice;
     return rc;
 }
-fn getExecutor(key: usize) !*Executor {
-    var executor = &executors[key];
+fn getExecutor(requested_path: []const u8) !*Executor {
+    var executor = blk: {
+        for (executors) |*exec| {
+            if (std.mem.startsWith(u8, requested_path, exec.target_prefix)) {
+                break :blk exec;
+            }
+        }
+        log.err("Could not find executor for target path '{s}'", .{requested_path});
+        return error.NoApplicableExecutor;
+    };
     if (executor.serveFn != null) return executor;
 
     executor.library = blk: {
@@ -146,7 +150,7 @@ fn loadOptionalSymbols(executor: *Executor) void {
 fn executorChanged(watch: usize) void {
     // NOTE: This will be called off the main thread
     log.debug("executor with watch {d} changed", .{watch});
-    for (&executors) |*executor| {
+    for (executors) |*executor| {
         if (executor.watch) |w| {
             if (w == watch) {
                 if (executor.library) |l| {
@@ -231,9 +235,13 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
+    var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
+    executors = try loadConfig(allocator);
+    defer allocator.free(executors);
+    defer parsed_config.deinit();
+
     watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
-    var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
     var server = std.http.Server.init(allocator, .{ .reuse_address = true });
     defer server.deinit();
 
@@ -269,6 +277,23 @@ pub fn main() !void {
         try stdout.print(" (pre-alloc: {}, alloc: {})\n", .{ bytes_preallocated, arena.queryCapacity() });
         try bw.flush();
     }
+}
+var parsed_config: config.ParsedConfig = undefined;
+fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
+    log.info("loading config", .{});
+    // We will not watch this file - let it reload on SIGHUP
+    var config_file = try std.fs.cwd().openFile("proxy.ini", .{});
+    defer config_file.close();
+    parsed_config = try config.init(allocator).parse(config_file.reader());
+    var al = try std.ArrayList(Executor).initCapacity(allocator, parsed_config.key_value_map.keys().len);
+    defer al.deinit();
+    for (parsed_config.key_value_map.keys(), parsed_config.key_value_map.values()) |k, v| {
+        al.appendAssumeCapacity(.{
+            .target_prefix = k,
+            .path = v,
+        });
+    }
+    return al.toOwnedSlice();
 }
 
 fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, writer: anytype) !void {
@@ -371,6 +396,9 @@ fn writeToTestBuffers(response: []const u8, res: *std.http.Server.Response) void
 }
 fn testRequest(request_bytes: []const u8) !void {
     const allocator = std.testing.allocator;
+    executors = try loadConfig(allocator);
+    defer allocator.free(executors);
+    defer parsed_config.deinit();
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
