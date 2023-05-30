@@ -36,6 +36,16 @@ pub fn build(b: *std.Build) void {
     });
     lib.linkLibC();
 
+    const interface_lib = b.addStaticLibrary(.{
+        .name = "libfaasproxy",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/interface.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(interface_lib);
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
