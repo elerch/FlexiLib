@@ -28,12 +28,36 @@ pub const Request = extern struct {
 };
 
 // If the library is Zig, we can use these helpers
+var allocator: ?*std.mem.Allocator = null;
+
+const log = std.log.scoped(.interface);
+
 pub const ZigRequest = struct {
     method: [:0]u8,
     content: []u8,
     headers: []Header,
 };
 
+pub const ZigResponse = struct {
+    body: *std.ArrayList(u8),
+    headers: *std.StringHashMap([]const u8),
+};
+
+pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigResponse) anyerror!void;
+
+/// This function is optional and can be exported by zig libraries for
+/// initialization. If exported, it will be called once in the beginning of
+/// a request and will be provided a pointer to std.mem.Allocator, which is
+/// useful for reusing the parent allocator. If you're planning on using
+/// the handleRequest helper below, you must use zigInit or otherwise
+/// set the interface allocator in your own version of zigInit
+pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
+    allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
+}
+
+/// Converts a StringHashMap to the structure necessary for passing through the
+/// C boundary. This will be called automatically for you via the handleRequest function
+/// and is also used by the main processing loop to coerce request headers
 pub fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8)) ![*]Header {
     var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.count());
     var iterator = headers.iterator();
@@ -49,24 +73,9 @@ pub fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8
     return header_array.items.ptr;
 }
 
-var allocator: ?*std.mem.Allocator = null;
-
-pub const ZigResponse = struct {
-    body: *std.ArrayList(u8),
-    headers: *std.StringHashMap([]const u8),
-};
-
-/// This function is optional and can be exported by zig libraries for
-/// initialization. If exported, it will be called once in the beginning of
-/// a request and will be provided a pointer to std.mem.Allocator, which is
-/// useful for reusing the parent allocator
-pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
-    allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
-}
-
-pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigResponse) anyerror!void;
-
-const log = std.log.scoped(.interface);
+/// handles a request, implementing the C interface to communicate between the
+/// main program and a zig library. Most importantly, it will catch/report
+/// errors appropriately and allow zig code to use standard Zig error semantics
 pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*Response {
     // TODO: implement another library in C or Rust or something to show
     // that anything using a C ABI can be successful
