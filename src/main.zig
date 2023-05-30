@@ -477,6 +477,6 @@ test "root path get" {
     std.testing.log_level = .debug;
     log.debug("", .{});
     try testGet("/");
-    try std.testing.expectEqual(@as(usize, 3), test_resp_buf_len);
-    try std.testing.expectEqualStrings(" 2.", test_resp_buf[0..test_resp_buf_len]);
+    try std.testing.expectEqual(@as(usize, 2), test_resp_buf_len);
+    try std.testing.expectEqualStrings(" 1", test_resp_buf[0..test_resp_buf_len]);
 }
