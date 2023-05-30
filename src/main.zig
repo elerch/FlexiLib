@@ -214,6 +214,23 @@ fn exitApp(exitcode: u8) void {
     // if (watcher_thread) |t|
     //     t.join();
 }
+fn reloadConfig(
+    _: i32,
+    _: *const std.os.siginfo_t,
+    _: ?*const anyopaque,
+) callconv(.C) void {
+    // TODO: Gracefully drain in flight requests and hold a lock here while
+    // we reload
+    var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
+    allocator.free(executors);
+    parsed_config.deinit();
+    executors = loadConfig(allocator) catch {
+        // TODO: Need to refactor so loadConfig brings back a struct with
+        // executors and parsed_config, then we can manage the lifecycle better
+        // and avoid this @panic call for more graceful handling
+        @panic("Could not reload config");
+    };
+}
 fn installSignalHandler() !void {
     var act = std.os.Sigaction{
         .handler = .{ .sigaction = exitApplication },
@@ -223,6 +240,13 @@ fn installSignalHandler() !void {
 
     try std.os.sigaction(std.os.SIG.INT, &act, null);
     try std.os.sigaction(std.os.SIG.TERM, &act, null);
+
+    var hup_act = std.os.Sigaction{
+        .handler = .{ .sigaction = reloadConfig },
+        .mask = std.os.empty_sigset,
+        .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
+    };
+    try std.os.sigaction(std.os.SIG.HUP, &hup_act, null);
 }
 
 pub fn main() !void {
@@ -293,6 +317,7 @@ fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
             .path = v,
         });
     }
+    log.info("config loaded", .{});
     return al.toOwnedSlice();
 }
 
