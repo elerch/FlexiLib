@@ -462,6 +462,13 @@ fn testGet(comptime path: []const u8) !void {
         "\r\n");
 }
 
+fn testHostGet(comptime host: []const u8, comptime path: []const u8) !void {
+    try testRequest("GET " ++ path ++ " HTTP/1.1\r\n" ++
+        "Host: " ++ host ++ "\r\n" ++
+        "Accept: */*\r\n" ++
+        "\r\n");
+}
+
 test {
     // To run nested container tests, either, call `refAllDecls` which will
     // reference all declarations located in the given argument.
@@ -479,4 +486,10 @@ test "root path get" {
     try testGet("/");
     try std.testing.expectEqual(@as(usize, 2), test_resp_buf_len);
     try std.testing.expectEqualStrings(" 1", test_resp_buf[0..test_resp_buf_len]);
+}
+test "root path, alternative host get" {
+    std.testing.log_level = .debug;
+    log.debug("", .{});
+    try testHostGet("iam.aws.lerch.org", "/");
+    try std.testing.expectEqualStrings("iam response", test_resp_buf[0..test_resp_buf_len]);
 }
