@@ -1,5 +1,6 @@
 const std = @import("std");
 
+// C interfaces between main and libraries
 pub const Header = extern struct {
     name_ptr: [*]u8,
     name_len: usize,
@@ -24,6 +25,13 @@ pub const Request = extern struct {
 
     headers: [*]Header,
     headers_len: usize,
+};
+
+// If the library is Zig, we can use these helpers
+pub const ZigRequest = struct {
+    method: [:0]u8,
+    content: []u8,
+    headers: []Header,
 };
 
 pub fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8)) ![*]Header {
@@ -56,7 +64,7 @@ pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
     allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
 }
 
-pub const ZigRequestHandler = *const fn (std.mem.Allocator, Request, ZigResponse) anyerror!void;
+pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigResponse) anyerror!void;
 
 const log = std.log.scoped(.interface);
 pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*Response {
@@ -69,10 +77,18 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
 
     // setup headers
     var headers = std.StringHashMap([]const u8).init(alloc);
-    zigRequestHandler(alloc, request.*, .{
-        .body = &response,
-        .headers = &headers,
-    }) catch |e| {
+    zigRequestHandler(
+        alloc,
+        .{
+            .method = request.method[0..request.method_len :0],
+            .content = request.content[0..request.content_len],
+            .headers = request.headers[0..request.headers_len],
+        },
+        .{
+            .body = &response,
+            .headers = &headers,
+        },
+    ) catch |e| {
         log.err("Unexpected error processing request: {any}", .{e});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpStackTrace(trace.*);
