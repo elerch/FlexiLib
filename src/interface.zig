@@ -79,7 +79,10 @@ pub fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8
 pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*Response {
     // TODO: implement another library in C or Rust or something to show
     // that anything using a C ABI can be successful
-    var alloc = if (allocator) |a| a.* else @panic("zigInit not called prior to handle_request. This is a coding error");
+    var alloc = if (allocator) |a| a.* else {
+        log.err("zigInit not called prior to handle_request. This is a coding error", .{});
+        return null;
+    };
 
     // setup response body
     var response = std.ArrayList(u8).init(alloc);
@@ -108,7 +111,10 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
     log.debug("response ptr: {*}", .{response.items.ptr});
     // Marshall data back for handling by server
 
-    var rc = alloc.create(Response) catch @panic("OOM");
+    var rc = alloc.create(Response) catch {
+        log.err("Could not allocate memory for response object. This may be fatal", .{});
+        return null;
+    };
     rc.ptr = response.items.ptr;
     rc.len = response.items.len;
     rc.headers = toHeaders(alloc, headers) catch |e| {
