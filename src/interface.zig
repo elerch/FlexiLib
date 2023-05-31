@@ -38,6 +38,11 @@ pub const ZigRequest = struct {
     headers: []Header,
 };
 
+pub const ZigHeader = struct {
+    name: []u8,
+    value: []u8,
+};
+
 pub const ZigResponse = struct {
     body: *std.ArrayList(u8),
     headers: *std.StringHashMap([]const u8),
@@ -53,6 +58,13 @@ pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigRespo
 /// set the interface allocator in your own version of zigInit
 pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
     allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
+}
+
+pub fn toZigHeader(header: Header) ZigHeader {
+    return .{
+        .name = header.name_ptr[0..header.name_len],
+        .value = header.value_ptr[0..header.value_len],
+    };
 }
 
 /// Converts a StringHashMap to the structure necessary for passing through the

@@ -40,7 +40,16 @@ fn handleRequest(allocator: std.mem.Allocator, request: interface.ZigRequest, re
     // setup
     var response_writer = response.body.writer();
     // real work
-    response_writer.print(" {d}", .{request.headers.len}) catch unreachable;
+    for (request.headers) |h| {
+        const header = interface.toZigHeader(h);
+        if (!std.ascii.eqlIgnoreCase(header.name, "host")) continue;
+        if (std.mem.startsWith(u8, header.value, "iam")) {
+            try response_writer.print("iam response", .{});
+            return;
+        }
+        break;
+    }
+    try response_writer.print(" {d}", .{request.headers.len});
     try response.headers.put("X-custom-foo", "bar");
     log.info("handlerequest header count {d}", .{response.headers.count()});
 }

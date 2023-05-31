@@ -37,7 +37,7 @@ const FullReturn = struct {
 // applies
 const Executor = struct {
     // configuration
-    target_prefix: []const u8,
+    match_data: []const u8,
     path: [:0]const u8,
 
     // fields used at runtime to do real work
@@ -62,8 +62,7 @@ var parsed_config: config.ParsedConfig = undefined;
 /// Serves a single request. Finds executor, marshalls request data for the C
 /// interface, calls the executor and marshalls data back
 fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*FullReturn {
-    // if (some path routing thing) {
-    const executor = try getExecutor(response.request.target);
+    const executor = try getExecutor(response.request.target, response.request.headers);
     if (executor.zigInitFn) |f|
         f(allocator);
 
@@ -115,10 +114,10 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
 }
 
 /// Gets and executor based on request data
-fn getExecutor(requested_path: []const u8) !*Executor {
+fn getExecutor(requested_path: []const u8, headers: std.http.Headers) !*Executor {
     var executor = blk: {
         for (executors) |*exec| {
-            if (std.mem.startsWith(u8, requested_path, exec.target_prefix)) {
+            if (executorIsMatch(exec.match_data, requested_path, headers)) {
                 break :blk exec;
             }
         }
@@ -152,6 +151,41 @@ fn getExecutor(requested_path: []const u8) !*Executor {
     executor.serveFn = @ptrCast(serveFn, serve_fn.?);
     loadOptionalSymbols(executor);
     return executor;
+}
+
+fn executorIsMatch(match_data: []const u8, requested_path: []const u8, headers: std.http.Headers) bool {
+    if (!std.mem.containsAtLeast(u8, match_data, 1, ":")) {
+        // match_data does not have a ':'. This means this is a straight path, without
+        // any header requirement. We can simply return a match prefix on the
+        // requested path
+        const rc = std.mem.startsWith(u8, requested_path, match_data);
+        if (rc) log.debug("executor match for path prefix '{s}'", .{match_data});
+        return rc;
+    }
+    const colon = std.mem.indexOf(u8, match_data, ":").?;
+    const header_needle = match_data[0..colon];
+    const header_inx = headers.firstIndexOf(header_needle) orelse return false;
+    // Apparently std.mem.split will return an empty first when the haystack starts
+    // with the delimiter
+    var split = std.mem.split(u8, std.mem.trim(u8, match_data[colon + 1 ..], "\t "), " ");
+    const header_value_needle = split.first();
+    const path_needle = split.next() orelse {
+        std.log.warn(
+            "Incorrect configuration. Header matching requires both header value and path prefix, space delimited. Key was '{s}'",
+            .{match_data},
+        );
+        return false;
+    };
+    // match_data includes some sort of header match as well. We assume the
+    // header match is a full match on the key (handled above)
+    // but a prefix match on the value
+    const request_header_value = headers.list.items[header_inx].value;
+    // (shoud this be case insensitive?)
+    if (!std.mem.startsWith(u8, request_header_value, header_value_needle)) return false;
+    // header value matches...return the path prefix match
+    const rc = std.mem.startsWith(u8, requested_path, path_needle);
+    if (rc) log.debug("executor match for header and path prefix '{s}'", .{match_data});
+    return rc;
 }
 
 /// Loads all optional symbols from the dynamic library. This has two entry
@@ -346,7 +380,7 @@ fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
     defer al.deinit();
     for (parsed_config.key_value_map.keys(), parsed_config.key_value_map.values()) |k, v| {
         al.appendAssumeCapacity(.{
-            .target_prefix = k,
+            .match_data = k,
             .path = v,
         });
     }
