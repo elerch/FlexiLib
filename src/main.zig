@@ -392,12 +392,11 @@ fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
 /// with logs, connection accounting, etc. The work dealing with the request
 /// itself is delegated to the serve function to work with the executor
 fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, writer: anytype) !void {
-    const max_header_size = 8192;
     if (timer == null) timer = try std.time.Timer.start();
     var tm = timer.?;
-    const res = try server.accept(.{ .dynamic = max_header_size });
+    var res = try server.accept(.{ .allocator = allocator.* });
     defer res.deinit();
-    defer res.reset();
+    defer _ = res.reset();
     try res.wait(); // wait for client to send a complete request head
     // I believe it's fair to start our timer after this is done
     tm.reset();
@@ -415,7 +414,7 @@ fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, write
     var errbuf: [errstr.len]u8 = undefined;
     var response_bytes = try std.fmt.bufPrint(&errbuf, errstr, .{});
 
-    var full_response = serve(allocator, res) catch |e| brk: {
+    var full_response = serve(allocator, &res) catch |e| brk: {
         res.status = .internal_server_error;
         // TODO: more about this particular request
         log.err("Unexpected error from executor processing request: {any}", .{e});
@@ -435,7 +434,7 @@ fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, write
     res.transfer_encoding = .{ .content_length = response_bytes.len };
     try res.headers.append("connection", "close");
     try writer.print(" {d} ttfb {d:.3}ms", .{ @enumToInt(res.status), @intToFloat(f64, tm.read()) / std.time.ns_per_ms });
-    if (builtin.is_test) writeToTestBuffers(response_bytes, res);
+    if (builtin.is_test) writeToTestBuffers(response_bytes, &res);
     try res.do();
     _ = try res.writer().writeAll(response_bytes);
     try res.finish();

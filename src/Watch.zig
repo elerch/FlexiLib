@@ -73,12 +73,12 @@ pub fn startWatch(self: *Self) void {
         self.watch_started = true;
 
         var fds = if (self.inotify_fd == null)
-            &[_]std.os.pollfd{.{ .fd = self.control_socket.?, .events = std.os.POLL.IN, .revents = undefined }}
+            @constCast(&[_]std.os.pollfd{.{ .fd = self.control_socket.?, .events = std.os.POLL.IN, .revents = undefined }})
         else
-            &[_]std.os.pollfd{
+            @constCast(&[_]std.os.pollfd{
                 .{ .fd = self.control_socket.?, .events = std.os.POLL.IN, .revents = undefined },
                 .{ .fd = self.inotify_fd.?, .events = std.os.POLL.IN, .revents = undefined },
-            };
+            });
 
         const control_fd_inx = 0;
         const inotify_fd_inx = 1;
