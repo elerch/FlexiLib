@@ -4,30 +4,52 @@ const testing = std.testing;
 
 const log = std.log.scoped(.@"main-lib");
 
-// request_deinit is an optional export and will be called a the end of the
-// request. Useful for deallocating memory
-// export fn request_deinit() void {
+// The main program will look for exports during the request lifecycle:
+// zigInit (optional): called at the beginning of a request, includes pointer to an allocator
+// handle_request: called with request data, expects response data
+// request_deinit (optional): called at the end of a request to allow resource cleanup
+//
+// Setup for these is aided by the interface library as shown below
+
+// zigInit is an optional export called at the beginning of a request. It will
+// be passed an allocator (which...shh...is an arena allocator). Since the
+// interface library provides a request handler that requires a built-in allocator,
+// if you are using the interface's handleRequest function as shown above,
+// you will need to also include this export. To customize, just do something
+// like this:
+//
+// export fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
+//   // your code here, just include the next line
+//   interface.zigInit(parent_allocator);
 // }
+//
+comptime {
+    @export(interface.zigInit, .{ .name = "zigInit", .linkage = .Strong });
+}
 
 /// handle_request will be called on a single request, but due to the preservation
 /// of restrictions imposed by the calling interface, it should generally be more
 /// useful to call into the interface library to let it do the conversion work
 /// on your behalf
 export fn handle_request(request: *interface.Request) callconv(.C) ?*interface.Response {
+    // The interface library provides a handleRequest function that will handle
+    // marshalling data back and forth from the C format used for the interface
+    // to a more Zig friendly format. It also allows usage of zig errors. To
+    // use, pass in the request and the zig function used to handle the request
+    // (here called "handleRequest"). The function signature must be:
+    //
+    // fn (std.mem.Allocator, interface.ZigRequest, interface.ZigResponse) !void
+    //
     return interface.handleRequest(request, handleRequest);
 }
 
-// zigInit is an optional export called at the beginning of a request. It will
-// be passed an allocator (which...shh...is an arena allocator). Since the
-// interface library provides a request handler that requires a built-in allocator,
-// if you are using the interface library, you will need to also include this
-// export
-comptime {
-    @export(
-        interface.zigInit,
-        .{ .name = "zigInit", .linkage = .Strong },
-    );
-}
+// request_deinit is an optional export and will be called a the end of the
+// request. Useful for deallocating memory. Since this is zig code and the
+// allocator used is an arena allocator, all allocated memory will be automatically
+// cleaned up by the main program at the end of a request
+//
+// export fn request_deinit() void {
+// }
 
 // ************************************************************************
 // Boilerplate ^^, Custom code vv
