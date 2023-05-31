@@ -89,7 +89,7 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     };
     var serve_result = executor.serveFn.?(&request).?; // ok for this pointer deref to fail
     log.debug("target: {s}", .{response.request.target});
-    log.debug("response ptr: {*}", .{serve_result.ptr}); // BUG: This works in tests, but does not when compiled (even debug mode)
+    log.debug("response ptr: {*}", .{serve_result.ptr});
     var slice: []u8 = serve_result.ptr[0..serve_result.len];
     log.debug("response body: {s}", .{slice});
 
