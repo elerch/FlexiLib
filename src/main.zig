@@ -4,16 +4,37 @@ const interface = @import("interface.zig");
 const Watch = @import("Watch.zig");
 const config = @import("config.zig");
 
+const log = std.log.scoped(.main);
+
+// logging options
+pub const std_options = struct {
+    pub const log_level = .debug;
+
+    pub const log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .watch, .level = .info },
+    };
+};
+
 const serveFn = *const fn (*interface.Request) ?*interface.Response;
 const zigInitFn = *const fn (*anyopaque) void;
 const requestDeinitFn = *const fn () void;
+
 const timeout = 250;
+
+var watcher = Watch.init(executorChanged);
+var watcher_thread: ?std.Thread = null;
+
+// Timer used by processRequest to provide ttfb/ttlb data in output
+var timer: ?std.time.Timer = null;
 
 const FullReturn = struct {
     response: []u8,
     executor: *Executor,
 };
 
+// Executor structure, including functions that were found in the library
+// and accounting. Also contains match data to determine if an executor
+// applies
 const Executor = struct {
     // configuration
     target_prefix: []const u8,
@@ -31,23 +52,15 @@ const Executor = struct {
     in_request_lock: bool = false,
 };
 
-var watcher = Watch.init(executorChanged);
-var watcher_thread: ?std.Thread = null;
-var timer: ?std.time.Timer = null; // timer used by processRequest
-
-const log = std.log.scoped(.main);
-pub const std_options = struct {
-    pub const log_level = .debug;
-
-    pub const log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .watch, .level = .info },
-    };
-};
 const SERVE_FN_NAME = "handle_request";
-const PORT = 8069;
+const PORT = 8069; // TODO: Update based on environment variable
+var initial_request_buffer: usize = 1; // TODO: Update based on environment variable
 
 var executors: []Executor = undefined;
+var parsed_config: config.ParsedConfig = undefined;
 
+/// Serves a single request. Finds executor, marshalls request data for the C
+/// interface, calls the executor and marshalls data back
 fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*FullReturn {
     // if (some path routing thing) {
     const executor = try getExecutor(response.request.target);
@@ -76,7 +89,7 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     };
     var serve_result = executor.serveFn.?(&request).?; // ok for this pointer deref to fail
     log.debug("target: {s}", .{response.request.target});
-    log.warn("response ptr: {*}", .{serve_result.ptr}); // BUG: This works in tests, but does not when compiled (even debug mode)
+    log.debug("response ptr: {*}", .{serve_result.ptr}); // BUG: This works in tests, but does not when compiled (even debug mode)
     var slice: []u8 = serve_result.ptr[0..serve_result.len];
     log.debug("response body: {s}", .{slice});
 
@@ -100,6 +113,8 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     rc.response = slice;
     return rc;
 }
+
+/// Gets and executor based on request data
 fn getExecutor(requested_path: []const u8) !*Executor {
     var executor = blk: {
         for (executors) |*exec| {
@@ -139,6 +154,9 @@ fn getExecutor(requested_path: []const u8) !*Executor {
     return executor;
 }
 
+/// Loads all optional symbols from the dynamic library. This has two entry
+/// points, though the logic around the primary request handler is slighly
+/// different in each case so we can't combine those two.
 fn loadOptionalSymbols(executor: *Executor) void {
     if (std.c.dlsym(executor.library.?, "request_deinit")) |s| {
         executor.requestDeinitFn = @ptrCast(requestDeinitFn, s);
@@ -147,6 +165,11 @@ fn loadOptionalSymbols(executor: *Executor) void {
         executor.zigInitFn = @ptrCast(zigInitFn, s);
     }
 }
+
+/// Executor changed. This will be called by a sepearate thread that is
+/// ultimately triggered from the operating system. This will wait for open
+/// requests to that libary to complete, then lock out new requests until
+/// the library is reloaded.
 fn executorChanged(watch: usize) void {
     // NOTE: This will be called off the main thread
     log.debug("executor with watch {d} changed", .{watch});
@@ -181,6 +204,7 @@ fn executorChanged(watch: usize) void {
     }
 }
 
+/// Wrapper to the c library to make us more ziggy
 fn dlopen(path: [:0]const u8) !*anyopaque {
     // We need now (and local) because we're about to call it
     const lib = std.c.dlopen(path, std.c.RTLD.NOW);
@@ -188,7 +212,8 @@ fn dlopen(path: [:0]const u8) !*anyopaque {
     return error.CouldNotOpenDynamicLibrary;
 }
 
-// fn exitApplication(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const anyopaque,) callconv(.C) noreturn {
+/// Exits the application, which is wired up to SIGINT. This is the only
+/// exit from the application as the main function has an infinite loop
 fn exitApplication(
     _: i32,
     _: *const std.os.siginfo_t,
@@ -198,6 +223,8 @@ fn exitApplication(
     std.os.exit(0);
 }
 
+/// exitApp handles deinitialization for the application and any reporting
+/// that needs to happen
 fn exitApp(exitcode: u8) void {
     if (exitcode == 0)
         std.io.getStdOut().writer().print("termination request: stopping watch\n", .{}) catch {}
@@ -210,10 +237,15 @@ fn exitApp(exitcode: u8) void {
     std.os.exit(exitcode);
     // joining threads will hang...we're ultimately in a signal handler.
     // But everything is shut down cleanly now, so I don't think it hurts to
-    // just kill it all
+    // just kill it all (NOTE: from a practical perspective, we do not seem
+    // to get a clean shutdown in all cases)
     // if (watcher_thread) |t|
     //     t.join();
 }
+
+/// reloadConfig is wired to SIGHUP and will reload all executors. In its
+/// current state, this is not a safe function as no connection draining
+/// has been implemented. Operates off the main thread
 fn reloadConfig(
     _: i32,
     _: *const std.os.siginfo_t,
@@ -231,6 +263,8 @@ fn reloadConfig(
         @panic("Could not reload config");
     };
 }
+
+/// Installs all signal handlers for shutdown and configuration reload
 fn installSignalHandler() !void {
     var act = std.os.Sigaction{
         .handler = .{ .sigaction = exitApplication },
@@ -302,7 +336,6 @@ pub fn main() !void {
         try bw.flush();
     }
 }
-var parsed_config: config.ParsedConfig = undefined;
 fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
     log.info("loading config", .{});
     // We will not watch this file - let it reload on SIGHUP
@@ -318,9 +351,12 @@ fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
         });
     }
     log.info("config loaded", .{});
-    return al.toOwnedSlice();
+    return al.toOwnedSlice(); // TODO: This should return a struct with the parsed config and executors
 }
 
+/// main loop calls processRequest, which is responsible for the interface
+/// with logs, connection accounting, etc. The work dealing with the request
+/// itself is delegated to the serve function to work with the executor
 fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, writer: anytype) !void {
     const max_header_size = 8192;
     if (timer == null) timer = try std.time.Timer.start();
@@ -440,7 +476,7 @@ fn testRequest(request_bytes: []const u8) !void {
     var aa = arena.allocator();
     var bytes_allocated: usize = 0;
     // pre-warm
-    bytes_allocated = try preWarmArena(aa, &arena, 1);
+    bytes_allocated = try preWarmArena(aa, &arena, initial_request_buffer);
     const server_thread = try std.Thread.spawn(
         .{},
         processRequest,

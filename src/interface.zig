@@ -58,7 +58,7 @@ pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
 /// Converts a StringHashMap to the structure necessary for passing through the
 /// C boundary. This will be called automatically for you via the handleRequest function
 /// and is also used by the main processing loop to coerce request headers
-pub fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8)) ![*]Header {
+fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8)) ![*]Header {
     var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.count());
     var iterator = headers.iterator();
     while (iterator.next()) |kv| {
