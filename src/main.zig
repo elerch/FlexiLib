@@ -8,7 +8,11 @@ const log = std.log.scoped(.main);
 
 // logging options
 pub const std_options = struct {
-    pub const log_level = .debug;
+    pub const log_level = switch (builtin.mode) {
+        .Debug => .debug,
+        .ReleaseSafe => .info,
+        .ReleaseFast, .ReleaseSmall => .err,
+    };
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .watch, .level = .info },
@@ -365,28 +369,33 @@ pub fn main() !void {
         log.info("pid: {d}", .{std.os.linux.getpid()});
 
     try installSignalHandler();
+    var server_thread_count = if (std.os.getenv("SERVER_THREAD_COUNT")) |count|
+        try std.fmt.parseInt(usize, count, 10)
+    else
+        try std.Thread.getCpuCount();
+    log.info("serving using {d} threads", .{server_thread_count});
+    var server_threads = try std.ArrayList(std.Thread).initCapacity(allocator, server_thread_count);
+    defer server_threads.deinit();
     // Set up thread pool
-    const server_thread = try std.Thread.spawn(
-        .{},
-        threadMain,
-        .{ allocator, &server },
-    );
-    const server_thread2 = try std.Thread.spawn(
-        .{},
-        threadMain,
-        .{ allocator, &server },
-    );
+    for (0..server_thread_count) |inx| {
+        server_threads.appendAssumeCapacity(try std.Thread.spawn(
+            .{},
+            threadMain,
+            .{ allocator, &server, inx },
+        ));
+    }
     // main thread will no longer do anything
     std.time.sleep(std.math.maxInt(u64));
-    server_thread.join();
-    server_thread2.join();
+    for (server_threads.items) |thread| thread.join();
 }
 
-fn threadMain(allocator: std.mem.Allocator, server: *std.http.Server) !void {
+fn threadMain(allocator: std.mem.Allocator, server: *std.http.Server, thread_number: usize) !void {
     // TODO: If we're in a thread pool we need to be careful with this...
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
+
+    log.info("starting server thread {d}, tid {d}", .{ thread_number, std.Thread.getCurrentId() });
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var aa = arena.allocator();
