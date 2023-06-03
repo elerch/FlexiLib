@@ -1,4 +1,4 @@
-[![](flexilib.png)](flexilib.png)
+[![](FlexiLib.png)](FlexiLib.png)
 
 FlexiLib
 ========
@@ -25,6 +25,8 @@ library can be found in src/main-lib.zig.
 
 Architecture
 ------------
+
+TODO:
 
 We assume Linux.
 To achieve the lowest latency possible and eliminate the proliferation, The architecture of this server is setup 
