@@ -371,9 +371,14 @@ pub fn main() !void {
     try installSignalHandler();
     var server_thread_count = if (std.os.getenv("SERVER_THREAD_COUNT")) |count|
         try std.fmt.parseInt(usize, count, 10)
-    else
-        try std.Thread.getCpuCount();
-    log.info("serving using {d} threads", .{server_thread_count});
+    else switch (builtin.mode) {
+        .Debug => std.math.min(4, try std.Thread.getCpuCount()),
+        else => try std.Thread.getCpuCount(),
+    };
+    switch (builtin.mode) {
+        .Debug => log.info("serving using {d} threads (debug build: capped at 4)", .{server_thread_count}),
+        else => log.info("serving using {d} threads", .{server_thread_count}),
+    }
     var server_threads = try std.ArrayList(std.Thread).initCapacity(allocator, server_thread_count);
     defer server_threads.deinit();
     // Set up thread pool
