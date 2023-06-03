@@ -59,7 +59,8 @@ const Executor = struct {
 
 const SERVE_FN_NAME = "handle_request";
 const PORT = 8069; // TODO: Update based on environment variable
-var initial_request_buffer: usize = 1; // TODO: Update based on environment variable
+var response_preallocation_kb: usize = 8; // We used to need 1kb, but the changes between zig 465272921 and fd6200eda
+// ends up allocating about 4kb. Bumping this to 8kb gives plugins some room
 
 var executors: []Executor = undefined;
 var parsed_config: config.ParsedConfig = undefined;
@@ -369,6 +370,10 @@ pub fn main() !void {
         log.info("pid: {d}", .{std.os.linux.getpid()});
 
     try installSignalHandler();
+    response_preallocation_kb = if (std.os.getenv("RESPONSE_PREALLOCATION_KB")) |kb|
+        try std.fmt.parseInt(usize, kb, 10)
+    else
+        response_preallocation_kb;
     var server_thread_count = if (std.os.getenv("SERVER_THREAD_COUNT")) |count|
         try std.fmt.parseInt(usize, count, 10)
     else switch (builtin.mode) {
@@ -404,7 +409,7 @@ fn threadMain(allocator: std.mem.Allocator, server: *std.http.Server, thread_num
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var aa = arena.allocator();
-    const bytes_preallocated = try preWarmArena(aa, &arena, 1);
+    const bytes_preallocated = try preWarmArena(aa, &arena, response_preallocation_kb);
     while (true) {
         defer {
             if (!arena.reset(.{ .retain_capacity = {} })) {
@@ -573,7 +578,7 @@ fn testRequest(request_bytes: []const u8) !void {
     var aa = arena.allocator();
     var bytes_allocated: usize = 0;
     // pre-warm
-    bytes_allocated = try preWarmArena(aa, &arena, initial_request_buffer);
+    bytes_allocated = try preWarmArena(aa, &arena, response_preallocation_kb);
     const server_thread = try std.Thread.spawn(
         .{},
         processRequest,

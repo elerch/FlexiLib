@@ -64,12 +64,16 @@ fn handleRequest(allocator: std.mem.Allocator, request: interface.ZigRequest, re
     // real work
     for (request.headers) |h| {
         const header = interface.toZigHeader(h);
-        if (!std.ascii.eqlIgnoreCase(header.name, "host")) continue;
-        if (std.mem.startsWith(u8, header.value, "iam")) {
+        // std.debug.print("\n{s}: {s}\n", .{ header.name, header.value });
+        if (std.ascii.eqlIgnoreCase(header.name, "host") and std.mem.startsWith(u8, header.value, "iam")) {
             try response_writer.print("iam response", .{});
             return;
         }
-        break;
+        if (std.ascii.eqlIgnoreCase(header.name, "x-slow")) {
+            std.time.sleep(std.time.ns_per_ms * (std.fmt.parseInt(usize, header.value, 10) catch 1000));
+            try response_writer.print("i am slow\n\n", .{});
+            return;
+        }
     }
     try response_writer.print(" {d}", .{request.headers.len});
     try response.headers.put("X-custom-foo", "bar");

@@ -29,6 +29,9 @@ Architecture
 TODO:
 
 We assume Linux.
+
+Built with zig 0.11.0-dev.3312+ab37ab33c (provide permalink). Explain lock to 0.11 when released.
+
 To achieve the lowest latency possible and eliminate the proliferation, The architecture of this server is setup 
 
 Security
