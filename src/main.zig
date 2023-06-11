@@ -552,9 +552,7 @@ fn writeToTestBuffers(response: []const u8, res: *std.http.Server.Response) void
     const errmsg = "response exceeds 1024 bytes";
     const src = if (response.len < 1024) response else errmsg;
     test_resp_buf_len = if (response.len < 1024) response.len else errmsg.len;
-    for (src, 0..) |b, i| {
-        test_resp_buf[i] = b;
-    }
+    for (src, 0..) |b, i| test_resp_buf[i] = b;
     for (test_resp_buf_len..1024) |i| test_resp_buf[i] = 0;
 }
 fn testRequest(request_bytes: []const u8) !void {
