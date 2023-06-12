@@ -1,4 +1,4 @@
-[![](FlexiLib.png)](FlexiLib.png)
+<img src="FlexiLib.svg" width="100px" />
 
 FlexiLib
 ========
