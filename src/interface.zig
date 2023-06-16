@@ -120,7 +120,6 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
         return null;
     };
 
-    log.debug("response ptr: {*}", .{response.items.ptr});
     // Marshall data back for handling by server
 
     var rc = alloc.create(Response) catch {
