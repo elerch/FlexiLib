@@ -362,7 +362,10 @@ pub fn main() !void {
     var server = std.http.Server.init(allocator, .{ .reuse_address = true });
     defer server.deinit();
 
-    const address = try std.net.Address.parseIp("0.0.0.0", PORT);
+    const address = try std.net.Address.parseIp(
+        "0.0.0.0",
+        if (std.os.getenv("PORT")) |p| try std.fmt.parseInt(u16, p, 10) else PORT,
+    );
     try server.listen(address);
     const server_port = server.socket.listen_address.in.getPort();
     log.info("listening on port: {d}", .{server_port});
