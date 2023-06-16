@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "faas-proxy",
+        .name = "flexilib",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
 
     const lib = b.addSharedLibrary(.{
-        .name = "faas-proxy-sample-lib",
+        .name = "flexilib-sample-lib",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main-lib.zig" },
@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
     lib.linkLibC();
 
     const interface_lib = b.addStaticLibrary(.{
-        .name = "libfaasproxy",
+        .name = "flexilib",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/interface.zig" },
