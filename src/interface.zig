@@ -28,7 +28,7 @@ pub const Request = extern struct {
 };
 
 // If the library is Zig, we can use these helpers
-var allocator: ?*std.mem.Allocator = null;
+threadlocal var allocator: ?*std.mem.Allocator = null;
 
 const log = std.log.scoped(.interface);
 
