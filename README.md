@@ -26,13 +26,33 @@ library can be found in src/main-lib.zig.
 Architecture
 ------------
 
-TODO:
+This library assumes the use of Linux as a host. While the primary engine is not
+tied to Linux, the file watcher module uses inotify and friends and will not
+work outside that OS. PRs are welcome.
 
-We assume Linux.
+The system is built with a pre-release version of zig, currently zig version
+[0.11.0-dev.3312+ab37ab33c](https://github.com/marler8997/zig-unofficial-releases#0110-dev3312ab37ab33c-summary).
+This version has web server in the standard library, so it is useful.
 
-Built with zig 0.11.0-dev.3312+ab37ab33c (provide permalink). Explain lock to 0.11 when released.
+To achieve the lowest latency possible, this server loads dynamic libraries
+using [dlopen(3)](https://linux.die.net/man/3/dlopen) based on a configuration
+file in the current working directory called `proxy.ini`. An example of the
+configuration is in this directory, and it is relatively simple string prefix
+matching, again, for speed.
 
-To achieve the lowest latency possible and eliminate the proliferation, The architecture of this server is setup 
+On startup, a thread pool will be created. Request paths and header matching
+is loaded from the configuration file, and file watches are initiated on all
+libraries mentioned in the configuration file. Libraries are loaded on demand
+when a request arrives that needs the library. When a library changes for a new
+version, the file watcher will take note and unload the previous version.
+
+Changes to the configuration file are not watched, relying instead on a HUP
+signal to force a reload. At that point, all libraries ("executors") are
+unloaded, and configuration is re-read.
+
+As libraries are loaded directly into main process space, bugs in the libraries
+can and will crash the engine. As such, some supervisory process (dockerd,
+systemd, etc) should monitor and restart if necessary.
 
 Security
 --------
@@ -53,11 +73,13 @@ reported by the system (although thread count is limited to 4 threads when
 compiled in debug mode). This can be controlled with the environment variable
 `SERVER_THREAD_COUNT`.
 
-Future plans include an environment variable for IP address and port to listen
-on, as well as the amount of pre-allocated memory for response data (currently
-hardcoded to 1k/thread). Pre-allocated memory reduces the number of system
+The port by default is 8069, although this can be set with the `PORT`
+environment variable. Future plans include an environment variable for IP
+address as well as the amount of pre-allocated memory for response data (currently
+hardcoded to 8k/thread). Pre-allocated memory reduces the number of system
 calls required for memory allocation, and pre-allocation/allocation statistics
-per request are reported in the logs.
+per request are reported in the logs. The current pre-allocation provides
+approximately 4k per request without requiring system calls.
 
 Logs
 ----
