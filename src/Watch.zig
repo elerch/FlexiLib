@@ -145,17 +145,11 @@ pub fn startWatch(self: *Self) void {
 
                 var ptr: [*]u8 = &event_buf;
                 const end_ptr = ptr + bytes_read;
-                while (@ptrToInt(ptr) < @ptrToInt(end_ptr)) {
-                    const ev = @ptrCast(
-                        *const std.os.linux.inotify_event,
-                        @alignCast(@alignOf(*const std.os.linux.inotify_event), ptr),
-                    );
+                while (@intFromPtr(ptr) < @intFromPtr(end_ptr)) {
+                    const ev = @as(*const std.os.linux.inotify_event, @ptrCast(@alignCast(ptr)));
 
                     // Read next event from inotify
-                    ptr = @alignCast(
-                        @alignOf(std.os.linux.inotify_event),
-                        ptr + @sizeOf(std.os.linux.inotify_event) + ev.len,
-                    );
+                    ptr = ptr + @sizeOf(std.os.linux.inotify_event) + ev.len;
                     self.processInotifyEvent(ev, ptr - ev.len);
                 }
             }
@@ -213,7 +207,7 @@ fn processInotifyEvent(self: Self, ev: *const std.os.linux.inotify_event, name_p
         // TODO: This should be a std.mem.sliceTo(@ptrCast([*:0]u8, name_ptr), ev.len);
         // and returning from C without a sentinal, we can use the same call, like this:
         // std.mem.sliceTo(@ptrCast([*]u8, name_ptr), len);
-        const name = std.mem.span(@ptrCast([*:0]u8, name_ptr));
+        const name = std.mem.span(@as([*:0]u8, @ptrCast(name_ptr)));
         log.debug("MOVED_TO({d}/{d}): {s}", .{ name.len, ev.len, name });
         for (self.dir_wds) |dir| {
             if (ev.wd == dir.wd) {

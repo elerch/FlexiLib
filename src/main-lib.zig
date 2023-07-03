@@ -86,15 +86,15 @@ test "handle_request" {
     var aa = arena.allocator();
     interface.zigInit(&aa);
     var headers: []interface.Header = @constCast(&[_]interface.Header{.{
-        .name_ptr = @ptrCast([*:0]u8, @constCast("GET".ptr)),
+        .name_ptr = @ptrCast(@constCast("GET".ptr)),
         .name_len = 3,
-        .value_ptr = @ptrCast([*:0]u8, @constCast("GET".ptr)),
+        .value_ptr = @ptrCast(@constCast("GET".ptr)),
         .value_len = 3,
     }});
     var req = interface.Request{
-        .method = @ptrCast([*:0]u8, @constCast("GET".ptr)),
+        .method = @ptrCast(@constCast("GET".ptr)),
         .method_len = 3,
-        .content = @ptrCast([*:0]u8, @constCast("GET".ptr)),
+        .content = @ptrCast(@constCast("GET".ptr)),
         .content_len = 3,
         .headers = headers.ptr,
         .headers_len = 1,

@@ -171,7 +171,7 @@ fn getExecutor(requested_path: []const u8, headers: std.http.Headers) !*Executor
     const serve_fn = std.c.dlsym(executor.library.?, SERVE_FN_NAME);
     if (serve_fn == null) return error.CouldNotLoadSymbolServe;
 
-    executor.serveFn = @ptrCast(serveFn, serve_fn.?);
+    executor.serveFn = @ptrCast(serve_fn.?);
     loadOptionalSymbols(executor);
     return executor;
 }
@@ -216,10 +216,10 @@ fn executorIsMatch(match_data: []const u8, requested_path: []const u8, headers: 
 /// different in each case so we can't combine those two.
 fn loadOptionalSymbols(executor: *Executor) void {
     if (std.c.dlsym(executor.library.?, "request_deinit")) |s| {
-        executor.requestDeinitFn = @ptrCast(requestDeinitFn, s);
+        executor.requestDeinitFn = @ptrCast(s);
     }
     if (std.c.dlsym(executor.library.?, "zigInit")) |s| {
-        executor.zigInitFn = @ptrCast(zigInitFn, s);
+        executor.zigInitFn = @ptrCast(s);
     }
 }
 
@@ -255,7 +255,7 @@ fn executorChanged(watch: usize) void {
                             @panic("System unstable: Error after library open and cannot close");
                         return;
                     }
-                    executor.serveFn = @ptrCast(serveFn, symbol);
+                    executor.serveFn = @ptrCast(symbol);
                     loadOptionalSymbols(executor);
                 }
             }
@@ -380,7 +380,7 @@ pub fn main() !void {
     var server_thread_count = if (std.os.getenv("SERVER_THREAD_COUNT")) |count|
         try std.fmt.parseInt(usize, count, 10)
     else switch (builtin.mode) {
-        .Debug => std.math.min(4, try std.Thread.getCpuCount()),
+        .Debug => @min(4, try std.Thread.getCpuCount()),
         else => try std.Thread.getCpuCount(),
     };
     switch (builtin.mode) {
@@ -505,14 +505,14 @@ fn processRequest(allocator: *std.mem.Allocator, server: *std.http.Server, write
         response_bytes = f.response;
     res.transfer_encoding = .{ .content_length = response_bytes.len };
     try res.headers.append("connection", "close");
-    try writer.print(" {d} ttfb {d:.3}ms", .{ @enumToInt(res.status), @intToFloat(f64, tm.read()) / std.time.ns_per_ms });
+    try writer.print(" {d} ttfb {d:.3}ms", .{ @intFromEnum(res.status), @as(f64, @floatFromInt(tm.read())) / std.time.ns_per_ms });
     if (builtin.is_test) writeToTestBuffers(response_bytes, &res);
     try res.do();
     _ = try res.writer().writeAll(response_bytes);
     try res.finish();
     try writer.print(" {d} ttlb {d:.3}ms", .{
         response_bytes.len,
-        @intToFloat(f64, tm.read()) / std.time.ns_per_ms,
+        @as(f64, @floatFromInt(tm.read())) / std.time.ns_per_ms,
     });
 }
 

@@ -57,7 +57,7 @@ pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigRespo
 /// the handleRequest helper below, you must use zigInit or otherwise
 /// set the interface allocator in your own version of zigInit
 pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
-    allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), parent_allocator));
+    allocator = @ptrCast(@alignCast(parent_allocator));
 }
 
 pub fn toZigHeader(header: Header) ZigHeader {

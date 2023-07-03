@@ -31,7 +31,7 @@ tied to Linux, the file watcher module uses inotify and friends and will not
 work outside that OS. PRs are welcome.
 
 The system is built with a pre-release version of zig, currently zig version
-[0.11.0-dev.3312+ab37ab33c](https://github.com/marler8997/zig-unofficial-releases#0110-dev3312ab37ab33c-summary).
+[0.11.0-dev.3886+0c1bfe271](https://github.com/marler8997/zig-unofficial-releases#0110-dev38860c1bfe271-summary).
 This version has web server in the standard library, so it is useful.
 
 To achieve the lowest latency possible, this server loads dynamic libraries

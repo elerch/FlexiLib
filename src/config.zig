@@ -26,7 +26,7 @@ pub const ParsedConfig = struct {
     pub fn deinit(self: *SelfConfig) void {
         for (self.key_value_map.keys(), self.key_value_map.values()) |k, v| {
             // StringArrayHashMap assumes []const u8, but what we've allocated is null terminated
-            self.config_allocator.free(@ptrCast([:0]const u8, k)); // this is also the key in value_key_map
+            self.config_allocator.free(@as([:0]const u8, @ptrCast(k))); // this is also the key in value_key_map
             self.config_allocator.free(v);
         }
 
