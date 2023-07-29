@@ -1,0 +1,124 @@
+name: Build
+run-name: Standard build, creates docker image and deploys on success
+on: [push]
+env:
+  ACTIONS_RUNTIME_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ACTIONS_RUNTIME_URL: https://git.lerch.org/api/actions_pipeline/
+  ZIG_URL: https://mirror.bazel.build/ziglang.org/builds/zig-linux-x86_64-0.11.0-dev.3886+0c1bfe271.tar.xz
+  BUILD_TARGET: x86_64-linux-gnu  # Needs to be gnu since we're using dlopen
+  BUILD_OPTIMIZATION: ReleaseSafe # Safety is usually a good thing
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Triggered by ${{ github.event_name }} event"
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Install zig
+        run: |
+          curl -s "$ZIG_URL" |tar -xJ -C /usr/local \
+          && ln -s /usr/local/zig*/zig /usr/local/bin \
+          && true
+      - name: Test
+        run: zig build test -Dtarget="$BUILD_TARGET"
+      - name: Build
+        run: zig build -Dtarget="$BUILD_TARGET" -Doptimize="$BUILD_OPTIMIZATION"
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: flexilib
+          path: 'zig-out/bin/flexilib'
+      - name: Notify
+        uses: https://git.lerch.org/lobo/action-notify-ntfy@v2
+        if: always()
+        with:
+          host: ${{ secrets.NTFY_HOST }}
+          topic: ${{ secrets.NTFY_TOPIC }}
+          user: ${{ secrets.NTFY_USER }}
+          password: ${{ secrets.NTFY_PASSWORD }}
+      - run: echo "Build status is ${{ job.status }}."
+  sign:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: flexilib
+      - name: "Position executable"
+        run: "chmod 755 flexilib/flexilib && mv flexilib art && mv art/flexilib . && rm -rf art"
+      - name: Sign
+        id: sign
+        uses: https://git.lerch.org/lobo/action-hsm-sign@v1
+        with:
+          pin: ${{ secrets.HSM_USER_PIN }}
+          files: flexilib
+          public_key: 'https://emil.lerch.org/serverpublic.pem'
+      - run: echo "Signature URL is ${{ steps.sign.outputs.URL_0 }}"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: signature
+          path: ${{ steps.sign.outputs.SIG_0 }}
+      # - run: |
+      #     echo "Source 0 should be ./bar: ${{ steps.sign.outputs.SOURCE_0 }}"
+      # - run: |
+      #     echo "Signature 0 should be ./bar.sig: ${{ steps.sign.outputs.SIG_0 }}"
+      # - run: echo "URL of bar (0) is ${{ steps.sign.outputs.URL_0 }}"
+      # - run: |
+      #     echo "Source 1 should be ./foo: ${{ steps.sign.outputs.SOURCE_1 }}"
+      # - run: |
+      #     echo "Signature 1 should be ./foo.sig: ${{ steps.sign.outputs.SIG_1 }}"
+      # - run: echo "URL of foo (1) is ${{ steps.sign.outputs.URL_1 }}"
+      - name: Notify
+        uses: https://git.lerch.org/lobo/action-notify-ntfy@v2
+        if: always()
+        with:
+          host: ${{ secrets.NTFY_HOST }}
+          topic: ${{ secrets.NTFY_TOPIC }}
+          user: ${{ secrets.NTFY_USER }}
+          password: ${{ secrets.NTFY_PASSWORD }}
+      - run: echo "Sign status is ${{ job.status }}."
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
+    needs: build
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: flexilib
+      - name: "Position executable"
+        run: "chmod 755 flexilib/flexilib && mv flexilib art  && mv art/flexilib docker && rm -rf art"
+      - name: Get short ref
+        id: vars
+        run: echo "shortsha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - run: "echo ${{ steps.vars.outputs.shortsha }}"
+      -
+        name: Login to Gitea
+        uses: docker/login-action@v2
+        with:
+          registry: git.lerch.org
+          username: ${{ github.actor }}
+          password: ${{ secrets.PACKAGE_PUSH }}
+      -
+        name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: docker
+          push: true
+          tags: git.lerch.org/${{ github.actor }}/flexilib:${{ steps.vars.outputs.shortsha }}
+          # Not sure what's up with the shortsha yet
+          #tags: git.lerch.org/${{ github.actor }}/flexilib:latest
+      - name: Notify
+        uses: https://git.lerch.org/lobo/action-notify-ntfy@v2
+        if: always()
+        with:
+          host: ${{ secrets.NTFY_HOST }}
+          topic: ${{ secrets.NTFY_TOPIC }}
+          user: ${{ secrets.NTFY_USER }}
+          password: ${{ secrets.NTFY_PASSWORD }}
+      - run: echo "Deploy status is ${{ job.status }}."
