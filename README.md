@@ -23,6 +23,55 @@ This project provides slightly better development and performance characteristic
 if the library used is written in [zig](https://ziglang.org). An example zig-based
 library can be found in src/main-lib.zig.
 
+Deployment
+----------
+
+Gitea actions are configured to build, sign, and deploy the source code. Each
+successful build will generate an artifact, which can be found at
+[https://git.lerch.org/lobo/FlexiLib/actions](https://git.lerch.org/lobo/FlexiLib/actions).
+
+Two artifacts will be available:
+
+* The flexilib binary, compiled for linux x86_64 with GNU libc. GNU libc is
+  necessary due to the dynamic loading involved, but otherwise it should be
+  possible to use the binary as is on any glibc-based Linux distribution.
+* A signature file generated from the HSM-based signing process. This can be
+  verified for authenticity against [sigstore](https://sigstore.dev/) public
+  transparency log with [rekor](ihttps://github.com/sigstore/rekor).
+
+Additionally, a docker container image will be build and uploaded using the
+tag `git.lerch.org/lobo/flexilib:<shortsha>`. For example, `docker pull git.lerch.org/lobo/flexilib:c02cd20`
+will get the docker container with flexilib from git commit `c02cd20`.
+
+Signature Validation
+--------------------
+
+To verify the build artifacts, you will need the rekor CLI and four additional
+things:
+
+* The signature file stored as a build artifact
+* The flexilib executable, also from the build
+* A downloaded version of the [server public key](https://emil.lerch.org/serverpublic.pem).
+  Theoretically rekor can take the URL at the command line, but this doesn't seem
+  to work for me
+* The sigstore entry URL from the Sign job in the Gitea action
+
+Once those four things are assembled, the following command will verify the
+executable matches the output from the build run at the time of the run:
+
+`rekor verify --artifact flexilib --entry <entry url> --signature signature --pki-format x509 --public-key serverpublic.pem`
+
+As an example, using output from [run 8](https://git.lerch.org/lobo/FlexiLib/actions/runs/8/jobs/1):
+
+```sh
+rekor verify \
+ --artifact flexilib \
+ --entry https://rekor.sigstore.dev/api/v1/log/entries/73a64ca9cc712f9645bfe79ae104b101e3ef7022172f0bfc3aa34d4f45ca2af8 \
+ --signature signature \
+ --pki-format x509 \
+ --public-key serverpublic.pem
+```
+
 Architecture
 ------------
 

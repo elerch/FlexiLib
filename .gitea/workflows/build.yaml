@@ -36,7 +36,6 @@ jobs:
           topic: ${{ secrets.NTFY_TOPIC }}
           user: ${{ secrets.NTFY_USER }}
           password: ${{ secrets.NTFY_PASSWORD }}
-      - run: echo "Build status is ${{ job.status }}."
   sign:
     runs-on: ubuntu-latest
     needs: build
@@ -54,22 +53,13 @@ jobs:
           pin: ${{ secrets.HSM_USER_PIN }}
           files: flexilib
           public_key: 'https://emil.lerch.org/serverpublic.pem'
-      - run: echo "Signature URL is ${{ steps.sign.outputs.URL_0 }}"
+      - name: Output signature URL
+        run: echo "Signature URL is ${{ steps.sign.outputs.URL_0 }}"
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
         with:
           name: signature
           path: ${{ steps.sign.outputs.SIG_0 }}
-      # - run: |
-      #     echo "Source 0 should be ./bar: ${{ steps.sign.outputs.SOURCE_0 }}"
-      # - run: |
-      #     echo "Signature 0 should be ./bar.sig: ${{ steps.sign.outputs.SIG_0 }}"
-      # - run: echo "URL of bar (0) is ${{ steps.sign.outputs.URL_0 }}"
-      # - run: |
-      #     echo "Source 1 should be ./foo: ${{ steps.sign.outputs.SOURCE_1 }}"
-      # - run: |
-      #     echo "Signature 1 should be ./foo.sig: ${{ steps.sign.outputs.SIG_1 }}"
-      # - run: echo "URL of foo (1) is ${{ steps.sign.outputs.URL_1 }}"
       - name: Notify
         uses: https://git.lerch.org/lobo/action-notify-ntfy@v2
         if: always()
@@ -78,7 +68,6 @@ jobs:
           topic: ${{ secrets.NTFY_TOPIC }}
           user: ${{ secrets.NTFY_USER }}
           password: ${{ secrets.NTFY_PASSWORD }}
-      - run: echo "Sign status is ${{ job.status }}."
   deploy:
     runs-on: ubuntu-latest
     container:
@@ -96,7 +85,6 @@ jobs:
       - name: Get short ref
         id: vars
         run: echo "shortsha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-      - run: "echo ${{ steps.vars.outputs.shortsha }}"
       -
         name: Login to Gitea
         uses: docker/login-action@v2
@@ -121,4 +109,3 @@ jobs:
           topic: ${{ secrets.NTFY_TOPIC }}
           user: ${{ secrets.NTFY_USER }}
           password: ${{ secrets.NTFY_PASSWORD }}
-      - run: echo "Deploy status is ${{ job.status }}."
