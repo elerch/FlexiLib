@@ -436,7 +436,7 @@ fn threadMain(allocator: std.mem.Allocator, server: *std.http.Server, thread_num
 }
 
 fn loadConfig(allocator: std.mem.Allocator) ![]Executor {
-    log.info("loading config", .{});
+    log.info("loading config from 'proxy.ini'", .{});
     // We will not watch this file - let it reload on SIGHUP
     var config_file = try std.fs.cwd().openFile("proxy.ini", .{});
     defer config_file.close();
