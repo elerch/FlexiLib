@@ -79,9 +79,7 @@ This library assumes the use of Linux as a host. While the primary engine is not
 tied to Linux, the file watcher module uses inotify and friends and will not
 work outside that OS. PRs are welcome.
 
-The system is built with a pre-release version of zig, currently zig version
-[0.11.0-dev.3886+0c1bfe271](https://github.com/marler8997/zig-unofficial-releases#0110-dev38860c1bfe271-summary).
-This version has web server in the standard library, so it is useful.
+The system is zig version [0.11](https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz).
 
 To achieve the lowest latency possible, this server loads dynamic libraries
 using [dlopen(3)](https://linux.die.net/man/3/dlopen) based on a configuration
