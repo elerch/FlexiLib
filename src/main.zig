@@ -82,6 +82,9 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     }
     log.debug("{d} bytes read from request", .{request_content.len});
     var request = interface.Request{
+        .target = response.request.target.ptr,
+        .target_len = response.request.target.len,
+
         .method = @constCast(method_tag[0..].ptr),
         .method_len = method_tag.len,
 

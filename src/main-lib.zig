@@ -92,6 +92,8 @@ test "handle_request" {
         .value_len = 3,
     }});
     var req = interface.Request{
+        .target = @ptrCast(@constCast("/".ptr)),
+        .target_len = 1,
         .method = @ptrCast(@constCast("GET".ptr)),
         .method_len = 3,
         .content = @ptrCast(@constCast("GET".ptr)),
