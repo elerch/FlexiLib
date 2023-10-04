@@ -26,6 +26,11 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibC();
 
+    _ = b.addModule("flexilib-interface", .{
+        .source_file = .{ .path = "src/interface.zig" },
+        .dependencies = &[_]std.build.ModuleDependency{},
+    });
+
     const lib = b.addSharedLibrary(.{
         .name = "flexilib-sample-lib",
         // In this case the main source file is merely a path, however, in more
