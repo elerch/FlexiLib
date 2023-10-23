@@ -14,6 +14,11 @@ pub const Response = extern struct {
 
     headers: [*]Header,
     headers_len: usize,
+
+    status: usize,
+
+    reason_ptr: [*]u8,
+    reason_len: usize,
 };
 
 pub const Request = extern struct {
@@ -39,7 +44,7 @@ pub const ZigRequest = struct {
     target: []const u8,
     method: [:0]u8,
     content: []u8,
-    headers: []Header,
+    headers: std.http.Headers,
 };
 
 pub const ZigHeader = struct {
@@ -48,11 +53,33 @@ pub const ZigHeader = struct {
 };
 
 pub const ZigResponse = struct {
+    status: std.http.Status = .ok,
+    reason: ?[]const u8 = null,
     body: *std.ArrayList(u8),
-    headers: *std.StringHashMap([]const u8),
+    headers: std.http.Headers,
+    request: ZigRequest,
+    prepend: std.ArrayList(u8),
+
+    pub fn write(res: *ZigResponse, bytes: []const u8) !usize {
+        return res.prepend.writer().write(bytes);
+    }
+
+    pub fn writeAll(res: *ZigResponse, bytes: []const u8) !void {
+        return res.prepend.writer().writeAll(bytes);
+    }
+
+    pub fn writer(res: *ZigResponse) std.io.Writer {
+        return res.prepend.writer().writer();
+    }
+
+    pub fn finish(res: *ZigResponse) !void {
+        if (res.prepend.items.len > 0)
+            try res.body.insertSlice(0, res.prepend.items);
+        res.prepend.deinit();
+    }
 };
 
-pub const ZigRequestHandler = *const fn (std.mem.Allocator, ZigRequest, ZigResponse) anyerror!void;
+pub const ZigRequestHandler = *const fn (std.mem.Allocator, *ZigResponse) anyerror!void;
 
 /// This function is optional and can be exported by zig libraries for
 /// initialization. If exported, it will be called once in the beginning of
@@ -64,28 +91,25 @@ pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
     allocator = @ptrCast(@alignCast(parent_allocator));
 }
 
-pub fn toZigHeader(header: Header) ZigHeader {
-    return .{
-        .name = header.name_ptr[0..header.name_len],
-        .value = header.value_ptr[0..header.value_len],
-    };
-}
-
 /// Converts a StringHashMap to the structure necessary for passing through the
 /// C boundary. This will be called automatically for you via the handleRequest function
 /// and is also used by the main processing loop to coerce request headers
-fn toHeaders(alloc: std.mem.Allocator, headers: std.StringHashMap([]const u8)) ![*]Header {
-    var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.count());
-    var iterator = headers.iterator();
-    while (iterator.next()) |kv| {
+fn toHeaders(alloc: std.mem.Allocator, headers: std.http.Headers) ![*]Header {
+    var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.list.items.len);
+    log.err("enter ({d})", .{headers.list.items.len});
+    for (headers.list.items) |*field| {
+        // var name = try alloc.dupe(u8, field.name);
+        // var val = try alloc.dupe(u8, field.value);
+        // log.err(" response header name {s}, val {s}", .{ name, val });
         header_array.appendAssumeCapacity(.{
-            .name_ptr = @constCast(kv.key_ptr.*).ptr,
-            .name_len = kv.key_ptr.*.len,
+            .name_ptr = @constCast(field.name.ptr),
+            .name_len = field.name.len,
 
-            .value_ptr = @constCast(kv.value_ptr.*).ptr,
-            .value_len = kv.value_ptr.*.len,
+            .value_ptr = @constCast(field.value.ptr),
+            .value_len = field.value.len,
         });
     }
+    log.err("exit", .{});
     return header_array.items.ptr;
 }
 
@@ -104,19 +128,43 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
     var response = std.ArrayList(u8).init(alloc);
 
     // setup headers
-    var headers = std.StringHashMap([]const u8).init(alloc);
-    zigRequestHandler(
-        alloc,
-        .{
+    var response_headers = std.http.Headers.init(alloc);
+    var request_headers = std.http.Headers.init(alloc);
+    for (0..request.headers_len) |i|
+        request_headers.append(
+            request.headers[i].name_ptr[0..request.headers[i].name_len],
+            request.headers[i].value_ptr[0..request.headers[i].value_len],
+        ) catch |e| {
+            log.err("Unexpected error processing request: {any}", .{e});
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+            return null;
+        };
+
+    //     if (serve_result.prepended_request_data_len > 0) {
+    //     var al = std.ArrayList(u8).initCapacity(allocator, slice.len + serve_result.prepended_request_data_len);
+    //     defer al.deinit();
+    //     al.appendSliceAssumeCapacity(serve_result.prepended_request_data[0..serve_result.prepended_request_data_len]);
+    //     al.appendSliceAssumeCapacity(slice);
+    //     slice = al.toOwnedSlice();
+    // }
+
+    var prepend = std.ArrayList(u8).init(alloc);
+    var zig_response = ZigResponse{
+        .headers = response_headers,
+        .body = &response,
+        .prepend = prepend,
+        .request = .{
+            .content = request.content[0..request.content_len],
             .target = request.target[0..request.target_len],
             .method = request.method[0..request.method_len :0],
-            .content = request.content[0..request.content_len],
-            .headers = request.headers[0..request.headers_len],
+            .headers = request_headers,
         },
-        .{
-            .body = &response,
-            .headers = &headers,
-        },
+    };
+    zigRequestHandler(
+        alloc,
+        &zig_response,
     ) catch |e| {
         log.err("Unexpected error processing request: {any}", .{e});
         if (@errorReturnTrace()) |trace| {
@@ -131,15 +179,27 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
         log.err("Could not allocate memory for response object. This may be fatal", .{});
         return null;
     };
+    zig_response.finish() catch {
+        log.err("Could not allocate memory for response object. This may be fatal", .{});
+        return null;
+    };
     rc.ptr = response.items.ptr;
     rc.len = response.items.len;
-    rc.headers = toHeaders(alloc, headers) catch |e| {
+    rc.headers = toHeaders(alloc, response_headers) catch |e| {
         log.err("Unexpected error processing request: {any}", .{e});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpStackTrace(trace.*);
         }
         return null;
     };
-    rc.headers_len = headers.count();
+    //log.err("headers len: {d} header[0] name: {s}", .{ rc.headers_len, rc.headers[0].name_ptr[0..rc.headers[0].name_len] });
+    rc.headers_len = response_headers.list.items.len;
+    rc.status = if (zig_response.status == .ok) 0 else @intFromEnum(zig_response.status);
+    rc.reason_len = 0;
+    if (zig_response.reason) |*r| {
+        rc.reason_ptr = @constCast(r.ptr);
+        rc.reason_len = r.len;
+    }
+
     return rc;
 }

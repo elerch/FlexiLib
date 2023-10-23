@@ -57,27 +57,31 @@ export fn handle_request(request: *interface.Request) callconv(.C) ?*interface.R
 //
 // handleRequest function here is the last line of boilerplate and the
 // entry to a request
-fn handleRequest(allocator: std.mem.Allocator, request: interface.ZigRequest, response: interface.ZigResponse) !void {
+fn handleRequest(allocator: std.mem.Allocator, response: *interface.ZigResponse) !void {
     _ = allocator;
     // setup
     var response_writer = response.body.writer();
     // real work
-    for (request.headers) |h| {
-        const header = interface.toZigHeader(h);
-        // std.debug.print("\n{s}: {s}\n", .{ header.name, header.value });
-        if (std.ascii.eqlIgnoreCase(header.name, "host") and std.mem.startsWith(u8, header.value, "iam")) {
+    if (response.request.headers.getFirstValue("host")) |host| {
+        if (std.mem.startsWith(u8, host, "iam")) {
             try response_writer.print("iam response", .{});
             return;
         }
-        if (std.ascii.eqlIgnoreCase(header.name, "x-slow")) {
-            std.time.sleep(std.time.ns_per_ms * (std.fmt.parseInt(usize, header.value, 10) catch 1000));
-            try response_writer.print("i am slow\n\n", .{});
-            return;
-        }
     }
-    try response_writer.print(" {d}", .{request.headers.len});
-    try response.headers.put("X-custom-foo", "bar");
-    log.info("handlerequest header count {d}", .{response.headers.count()});
+    if (response.request.headers.getFirstValue("x-slow")) |ms| {
+        std.time.sleep(std.time.ns_per_ms * (std.fmt.parseInt(usize, ms, 10) catch 1000));
+        try response_writer.print("i am slow\n\n", .{});
+        return;
+    }
+    if (response.request.headers.getFirstValue("x-log-this")) |l| {
+        try response.writeAll(l);
+    }
+    if (response.request.headers.getFirstValue("x-status")) |s| {
+        response.status = @enumFromInt(std.fmt.parseInt(u10, s, 10) catch 500);
+    }
+    try response_writer.print(" {d}", .{response.request.headers.list.items.len});
+    try response.headers.append("X-custom-foo", "bar");
+    log.info("handlerequest header count {d}", .{response.headers.list.items.len});
 }
 
 test "handle_request" {
@@ -103,6 +107,7 @@ test "handle_request" {
     };
     const response = handle_request(&req).?;
     try testing.expectEqualStrings(" 1", response.ptr[0..response.len]);
+    try testing.expectEqual(@as(usize, 1), response.headers_len);
     try testing.expectEqualStrings("X-custom-foo", response.headers[0].name_ptr[0..response.headers[0].name_len]);
     try testing.expectEqualStrings("bar", response.headers[0].value_ptr[0..response.headers[0].value_len]);
 }

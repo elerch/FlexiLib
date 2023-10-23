@@ -100,6 +100,12 @@ fn serve(allocator: *std.mem.Allocator, response: *std.http.Server.Response) !*F
     var slice: []u8 = serve_result.ptr[0..serve_result.len];
     log.debug("response body: {s}", .{slice});
 
+    if (serve_result.status != 0) {
+        response.status = @enumFromInt(serve_result.status);
+        if (serve_result.reason_len > 0) {
+            response.reason = serve_result.reason_ptr[0..serve_result.reason_len];
+        }
+    }
     // Deal with results
     var content_type_added = false;
     for (0..serve_result.headers_len) |inx| {
