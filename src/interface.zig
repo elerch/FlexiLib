@@ -96,11 +96,7 @@ pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
 /// and is also used by the main processing loop to coerce request headers
 fn toHeaders(alloc: std.mem.Allocator, headers: std.http.Headers) ![*]Header {
     var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.list.items.len);
-    log.err("enter ({d})", .{headers.list.items.len});
     for (headers.list.items) |*field| {
-        // var name = try alloc.dupe(u8, field.name);
-        // var val = try alloc.dupe(u8, field.value);
-        // log.err(" response header name {s}, val {s}", .{ name, val });
         header_array.appendAssumeCapacity(.{
             .name_ptr = @constCast(field.name.ptr),
             .name_len = field.name.len,
@@ -109,7 +105,6 @@ fn toHeaders(alloc: std.mem.Allocator, headers: std.http.Headers) ![*]Header {
             .value_len = field.value.len,
         });
     }
-    log.err("exit", .{});
     return header_array.items.ptr;
 }
 
@@ -128,7 +123,6 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
     var response = std.ArrayList(u8).init(alloc);
 
     // setup headers
-    var response_headers = std.http.Headers.init(alloc);
     var request_headers = std.http.Headers.init(alloc);
     for (0..request.headers_len) |i|
         request_headers.append(
@@ -142,17 +136,9 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
             return null;
         };
 
-    //     if (serve_result.prepended_request_data_len > 0) {
-    //     var al = std.ArrayList(u8).initCapacity(allocator, slice.len + serve_result.prepended_request_data_len);
-    //     defer al.deinit();
-    //     al.appendSliceAssumeCapacity(serve_result.prepended_request_data[0..serve_result.prepended_request_data_len]);
-    //     al.appendSliceAssumeCapacity(slice);
-    //     slice = al.toOwnedSlice();
-    // }
-
     var prepend = std.ArrayList(u8).init(alloc);
     var zig_response = ZigResponse{
-        .headers = response_headers,
+        .headers = .{ .allocator = alloc },
         .body = &response,
         .prepend = prepend,
         .request = .{
@@ -170,11 +156,16 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpStackTrace(trace.*);
         }
-        return null;
+        if (zig_response.status == .ok) // this was an unexpected throw
+            zig_response.status = .internal_server_error;
+        return buildResponse(alloc, &zig_response);
     };
 
     // Marshall data back for handling by server
+    return buildResponse(alloc, &zig_response);
+}
 
+fn buildResponse(alloc: std.mem.Allocator, zig_response: *ZigResponse) ?*Response {
     var rc = alloc.create(Response) catch {
         log.err("Could not allocate memory for response object. This may be fatal", .{});
         return null;
@@ -183,23 +174,22 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
         log.err("Could not allocate memory for response object. This may be fatal", .{});
         return null;
     };
-    rc.ptr = response.items.ptr;
-    rc.len = response.items.len;
-    rc.headers = toHeaders(alloc, response_headers) catch |e| {
+
+    rc.ptr = zig_response.body.items.ptr;
+    rc.len = zig_response.body.items.len;
+    rc.headers = toHeaders(alloc, zig_response.headers) catch |e| {
         log.err("Unexpected error processing request: {any}", .{e});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpStackTrace(trace.*);
         }
         return null;
     };
-    //log.err("headers len: {d} header[0] name: {s}", .{ rc.headers_len, rc.headers[0].name_ptr[0..rc.headers[0].name_len] });
-    rc.headers_len = response_headers.list.items.len;
+    rc.headers_len = zig_response.headers.list.items.len;
     rc.status = if (zig_response.status == .ok) 0 else @intFromEnum(zig_response.status);
     rc.reason_len = 0;
     if (zig_response.reason) |*r| {
         rc.reason_ptr = @constCast(r.ptr);
         rc.reason_len = r.len;
     }
-
     return rc;
 }

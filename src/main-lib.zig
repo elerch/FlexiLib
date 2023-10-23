@@ -79,9 +79,11 @@ fn handleRequest(allocator: std.mem.Allocator, response: *interface.ZigResponse)
     if (response.request.headers.getFirstValue("x-status")) |s| {
         response.status = @enumFromInt(std.fmt.parseInt(u10, s, 10) catch 500);
     }
+    if (response.request.headers.getFirstValue("x-throw")) |_| {
+        return error.Thrown;
+    }
     try response_writer.print(" {d}", .{response.request.headers.list.items.len});
     try response.headers.append("X-custom-foo", "bar");
-    log.info("handlerequest header count {d}", .{response.headers.list.items.len});
 }
 
 test "handle_request" {
@@ -103,11 +105,104 @@ test "handle_request" {
         .content = @ptrCast(@constCast("GET".ptr)),
         .content_len = 3,
         .headers = headers.ptr,
-        .headers_len = 1,
+        .headers_len = headers.len,
     };
     const response = handle_request(&req).?;
     try testing.expectEqualStrings(" 1", response.ptr[0..response.len]);
     try testing.expectEqual(@as(usize, 1), response.headers_len);
     try testing.expectEqualStrings("X-custom-foo", response.headers[0].name_ptr[0..response.headers[0].name_len]);
     try testing.expectEqualStrings("bar", response.headers[0].value_ptr[0..response.headers[0].value_len]);
+}
+
+test "lib can write data directly" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var aa = arena.allocator();
+    interface.zigInit(&aa);
+    var headers: []interface.Header = @constCast(&[_]interface.Header{.{
+        .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
+        .name_len = "x-log-this".len,
+        .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
+        .value_len = "I am a teapot".len,
+    }});
+    var req = interface.Request{
+        .target = @ptrCast(@constCast("/".ptr)),
+        .target_len = 1,
+        .method = @ptrCast(@constCast("GET".ptr)),
+        .method_len = 3,
+        .content = @ptrCast(@constCast("GET".ptr)),
+        .content_len = 3,
+        .headers = headers.ptr,
+        .headers_len = headers.len,
+    };
+    const response = handle_request(&req).?;
+    try testing.expectEqual(@as(usize, 1), response.headers_len);
+    try testing.expectEqualStrings("X-custom-foo", response.headers[0].name_ptr[0..response.headers[0].name_len]);
+    try testing.expectEqualStrings("bar", response.headers[0].value_ptr[0..response.headers[0].value_len]);
+    try testing.expectEqualStrings("I am a teapot 1", response.ptr[0..response.len]);
+}
+test "lib can write data directly and still throw" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var aa = arena.allocator();
+    interface.zigInit(&aa);
+    var headers: []interface.Header = @constCast(&[_]interface.Header{ .{
+        .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
+        .name_len = "x-log-this".len,
+        .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
+        .value_len = "I am a teapot".len,
+    }, .{
+        .name_ptr = @ptrCast(@constCast("x-throw".ptr)),
+        .name_len = "x-throw".len,
+        .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
+        .value_len = "I am a teapot".len,
+    } });
+    var req = interface.Request{
+        .target = @ptrCast(@constCast("/".ptr)),
+        .target_len = 1,
+        .method = @ptrCast(@constCast("GET".ptr)),
+        .method_len = 3,
+        .content = @ptrCast(@constCast("GET".ptr)),
+        .content_len = 3,
+        .headers = headers.ptr,
+        .headers_len = headers.len,
+    };
+    const response = handle_request(&req).?;
+    try testing.expectEqual(@as(usize, 500), response.status);
+    try testing.expectEqualStrings("I am a teapot", response.ptr[0..response.len]);
+}
+test "lib can set status, update data directly and still throw" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var aa = arena.allocator();
+    interface.zigInit(&aa);
+    var headers: []interface.Header = @constCast(&[_]interface.Header{ .{
+        .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
+        .name_len = "x-log-this".len,
+        .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
+        .value_len = "I am a teapot".len,
+    }, .{
+        .name_ptr = @ptrCast(@constCast("x-throw".ptr)),
+        .name_len = "x-throw".len,
+        .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
+        .value_len = "I am a teapot".len,
+    }, .{
+        .name_ptr = @ptrCast(@constCast("x-status".ptr)),
+        .name_len = "x-status".len,
+        .value_ptr = @ptrCast(@constCast("418".ptr)),
+        .value_len = "418".len,
+    } });
+    var req = interface.Request{
+        .target = @ptrCast(@constCast("/".ptr)),
+        .target_len = 1,
+        .method = @ptrCast(@constCast("GET".ptr)),
+        .method_len = 3,
+        .content = @ptrCast(@constCast("GET".ptr)),
+        .content_len = 3,
+        .headers = headers.ptr,
+        .headers_len = headers.len,
+    };
+    const response = handle_request(&req).?;
+    try testing.expectEqual(@as(usize, 418), response.status);
+    try testing.expectEqualStrings("I am a teapot", response.ptr[0..response.len]);
 }

@@ -625,6 +625,7 @@ test {
     std.testing.refAllDecls(@This());
     std.testing.refAllDecls(config);
     std.testing.refAllDecls(interface);
+    std.testing.refAllDecls(@import("main-lib.zig"));
 }
 var test_resp_buf: [1024]u8 = undefined;
 var test_resp_buf_len: usize = undefined;
