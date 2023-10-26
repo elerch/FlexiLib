@@ -20,12 +20,14 @@ dir_nfds_t: usize = 0,
 dir_wds: [MAX_FDS]Wd = [_]Wd{.{}} ** MAX_FDS,
 control_socket: ?std.os.socket_t = null,
 watch_started: bool = false,
+sock_name: [:0]const u8,
 
 pub fn init(file_changed: *const fn (usize) void) Self {
     if (builtin.os.tag != .linux)
         @compileError("Unsupported OS");
     return .{
         .fileChanged = file_changed,
+        .sock_name = sockName(),
     };
 }
 
@@ -50,12 +52,15 @@ pub fn deinit(self: *Self) void {
         std.os.close(fd);
     }
     const cwd = std.fs.cwd();
-    cwd.deleteFileZ(SOCK_NAME) catch |e|
-        log.err("error removing socket file " ++ SOCK_NAME ++ ": {any}", .{e});
+    cwd.deleteFileZ(self.sock_name) catch |e|
+        log.err("error removing socket file {s}: {any}", .{ self.sock_name, e });
 }
 
 const SOCK_NAME = "S.watch-control";
-
+var buf = [_]u8{0} ** (SOCK_NAME.len + "-9223372036854775807 ".len);
+fn sockName() [:0]const u8 {
+    return std.fmt.bufPrintZ(buf[0..], "{s}-{d}", .{ SOCK_NAME, std.time.timestamp() }) catch unreachable; // buffer designed for Max(i64) with sock name and a trailing \0
+}
 /// starts the file watch. This function will not return, so it is best
 /// to put this function in its own thread:
 ///
@@ -66,7 +71,7 @@ const SOCK_NAME = "S.watch-control";
 /// is intended later
 pub fn startWatch(self: *Self) void {
     if (self.control_socket == null)
-        self.addControlSocket(SOCK_NAME) catch @panic("could not add control socket");
+        self.addControlSocket(self.sock_name) catch @panic("could not add control socket");
     std.debug.assert(self.control_socket != null);
 
     while (true) {
@@ -103,7 +108,7 @@ pub fn startWatch(self: *Self) void {
 
                 // self.control_socket_accepted_fd = self.control_socket_accepted_fd orelse acceptSocket(self.control_socket.?);
                 // const fd = self.control_socket_accepted_fd.?; // let's save some typing
-                const fd = acceptSocket(self.control_socket.?);
+                const fd = acceptSocket(self.sock_name, self.control_socket.?);
                 defer std.os.close(fd);
 
                 var readcount = std.os.recv(fd, &control_buf, 0) catch unreachable;
@@ -157,8 +162,8 @@ pub fn startWatch(self: *Self) void {
     }
 }
 
-fn acceptSocket(socket: std.os.socket_t) std.os.socket_t {
-    var sockaddr = std.net.Address.initUnix(SOCK_NAME) catch @panic("could not get sockaddr");
+fn acceptSocket(name: [:0]const u8, socket: std.os.socket_t) std.os.socket_t {
+    var sockaddr = std.net.Address.initUnix(name) catch @panic("could not get sockaddr");
     var sockaddr_len: std.os.socklen_t = sockaddr.getOsSockLen();
     log.debug("tid={d} accepting on socket fd {d}", .{ std.Thread.getCurrentId(), socket });
     return std.os.accept(
@@ -322,7 +327,7 @@ fn sendControl(self: Self, control: u8) !void {
     // log.debug("request to send control 0x{x}", .{control});
     if (self.control_socket == null) return; // nothing to do
     // log.debug("tid={d} opening stream", .{std.Thread.getCurrentId()});
-    var stream = try std.net.connectUnixSocket(SOCK_NAME);
+    var stream = try std.net.connectUnixSocket(self.sock_name);
     defer stream.close();
     log.debug("tid={d} sending control 0x{x} on socket fd={d}", .{ std.Thread.getCurrentId(), control, stream.handle });
     try stream.writer().writeByte(control);
@@ -373,7 +378,7 @@ fn addControlSocket(self: *Self, path: [:0]const u8) !void {
 
     const sockaddr = try std.net.Address.initUnix(path);
 
-    // TODO: If this bind fails with EADDRINUSE we can probably delete the existing file
+    log.debug("binding to path: {s}", .{path});
     try std.os.bind(sock, &sockaddr.any, sockaddr.getOsSockLen());
     try std.os.listen(sock, 10);
     self.control_socket = sock;
