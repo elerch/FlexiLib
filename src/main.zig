@@ -352,16 +352,55 @@ fn installSignalHandler() !void {
 }
 
 pub fn main() !void {
+    // We are linked to libc, and primarily using the arena allocator
+    // raw allocator recommended for use in arenas
+    var raw_allocator = std.heap.raw_c_allocator;
+
+    // Our child process will also need an allocator, and is using the
+    // same pattern, so we will hand the child a raw allocator as well
+    var child_allocator = std.heap.raw_c_allocator;
+
+    // Lastly, we need some of our own operations
+    var arena = std.heap.ArenaAllocator.init(raw_allocator);
+    defer arena.deinit();
+    var parent_allocator = arena.allocator();
+
+    var al = std.ArrayList([]const u8).init(parent_allocator);
+    defer al.deinit();
+    var argi = std.process.args();
+    // We do this first so it shows more prominently when looking at processes
+    // Also it will be slightly faster for whatever that is worth
+    const child_arg = "--child";
+    if (argi.next()) |a| try al.append(a);
+    try al.append(child_arg);
+    while (argi.next()) |a| {
+        if (std.mem.eql(u8, child_arg, a)) {
+            // This should never actually return
+            return try childMain(child_allocator);
+        }
+        try al.append(a);
+    }
+    // Parent
+    const stdin = std.io.getStdIn();
+    const stdout = std.io.getStdOut();
+    const stderr = std.io.getStdErr();
+    while (true) {
+        // If we use the arena here, we risk a memory leak when our child
+        // panics. This is because arenas don't actually free memory until
+        // they deinit. So we need to use the raw allocator here, but the
+        // arena can be used to store our arguments above
+        var cp = std.ChildProcess.init(al.items, raw_allocator);
+        cp.stdin = stdin;
+        cp.stdout = stdout;
+        cp.stderr = stderr;
+        _ = try cp.spawnAndWait();
+        try stderr.writeAll("Caught abnormal process termination, relaunching server");
+    }
+}
+
+fn childMain(allocator: std.mem.Allocator) !void {
     defer exitApp(1);
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    // const stdout_file = std.io.getStdOut().writer();
-    // var bw = std.io.bufferedWriter(stdout_file);
-    // const stdout = bw.writer();
-
-    var allocator = std.heap.raw_c_allocator; // raw allocator recommended for use in arenas
     executors = try loadConfig(allocator);
     defer allocator.free(executors);
     defer parsed_config.deinit();
