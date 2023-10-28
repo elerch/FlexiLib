@@ -25,7 +25,7 @@ const requestDeinitFn = *const fn () void;
 
 const timeout = 250;
 
-var watcher = Watch.init(executorChanged);
+var watcher: Watch = undefined;
 var watcher_thread: ?std.Thread = null;
 
 // Timer used by processRequest to provide ttfb/ttlb data in output
@@ -405,6 +405,7 @@ fn childMain(allocator: std.mem.Allocator) !void {
     defer allocator.free(executors);
     defer parsed_config.deinit();
 
+    watcher = Watch.init(executorChanged);
     watcher_thread = try std.Thread.spawn(.{}, Watch.startWatch, .{&watcher});
 
     var server = std.http.Server.init(allocator, .{ .reuse_address = true });
