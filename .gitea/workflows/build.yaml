@@ -44,10 +44,8 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: flexilib
-      - name: "Figure out what changed in maybe the gitea upgrade?"
-        run: "ls -l && ls -l flexilib"
-      - name: "Position executable"
-        run: "chmod 755 flexilib/flexilib && mv flexilib art && mv art/flexilib . && rm -rf art"
+      - name: "Make executable actually executable"
+        run: "chmod 755 flexilib"
       - name: Sign
         id: sign
         uses: https://git.lerch.org/lobo/action-hsm-sign@v1
@@ -82,8 +80,8 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: flexilib
-      - name: "Position executable"
-        run: "chmod 755 flexilib/flexilib && mv flexilib art  && mv art/flexilib docker && rm -rf art"
+      - name: "Make executable actually executable"
+        run: "chmod 755 flexilib"
       - name: Get short ref
         id: vars
         run: echo "shortsha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
