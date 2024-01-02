@@ -81,7 +81,7 @@ jobs:
         with:
           name: flexilib
       - name: "Make executable actually executable"
-        run: "chmod 755 flexilib"
+        run: "chmod 755 flexilib && mv flexilib docker"
       - name: Get short ref
         id: vars
         run: echo "shortsha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
