@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // C interfaces between main and libraries
 pub const Header = extern struct {
@@ -129,10 +130,7 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
             .name = request.headers[i].name_ptr[0..request.headers[i].name_len],
             .value = request.headers[i].value_ptr[0..request.headers[i].value_len],
         }) catch |e| {
-            log.err("Unexpected error processing request: {any}", .{e});
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
+            logError("Unexpected error processing request: {any}", .{e}, @errorReturnTrace());
             return null;
         };
 
@@ -146,10 +144,7 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
             .target = request.target[0..request.target_len],
             .method = request.method[0..request.method_len :0],
             .headers = request_headers.toOwnedSlice() catch |e| {
-                log.err("Unexpected error processing request: {any}", .{e});
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
+                logError("Unexpected error processing request: {any}", .{e}, @errorReturnTrace());
                 return null;
             },
         },
@@ -158,17 +153,21 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
         alloc,
         &zig_response,
     ) catch |e| {
-        log.err("Unexpected error processing request: {any}", .{e});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
-        }
+        logError("Unexpected error processing request: {any}", .{e}, @errorReturnTrace());
         if (zig_response.status == .ok) // this was an unexpected throw
             zig_response.status = .internal_server_error;
         return buildResponse(alloc, &zig_response);
     };
-
     // Marshall data back for handling by server
     return buildResponse(alloc, &zig_response);
+}
+
+fn logError(comptime format: []const u8, args: anytype, stack_trace: anytype) void {
+    if (builtin.is_test) return;
+    log.err(format, args);
+    if (stack_trace) |trace| {
+        std.debug.dumpStackTrace(trace.*);
+    }
 }
 
 fn buildResponse(alloc: std.mem.Allocator, zig_response: *ZigResponse) ?*Response {
