@@ -4,7 +4,7 @@ on: [push]
 env:
   ACTIONS_RUNTIME_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   ACTIONS_RUNTIME_URL: https://git.lerch.org/api/actions_pipeline/
-  ZIG_URL: https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+  ZIG_URL: https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz
   BUILD_TARGET: x86_64-linux-gnu  # Needs to be gnu since we're using dlopen
   BUILD_OPTIMIZATION: ReleaseSafe # Safety is usually a good thing
 jobs:
