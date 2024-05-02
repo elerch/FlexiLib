@@ -12,13 +12,13 @@ const Wd = struct {
 };
 
 fileChanged: *const fn (usize) void,
-inotify_fd: ?std.os.fd_t = null,
+inotify_fd: ?std.posix.fd_t = null,
 
 nfds_t: usize = 0,
 wds: [MAX_FDS]Wd = [_]Wd{.{}} ** MAX_FDS,
 dir_nfds_t: usize = 0,
 dir_wds: [MAX_FDS]Wd = [_]Wd{.{}} ** MAX_FDS,
-control_socket: ?std.os.socket_t = null,
+control_socket: ?std.posix.socket_t = null,
 watch_started: bool = false,
 sock_name: [:0]const u8,
 
@@ -35,21 +35,14 @@ pub fn deinit(self: *Self) void {
     if (self.control_socket) |s| {
         // Sockets...where Unix still pretends everything is a file, but it's not...
         log.debug("closing control socket", .{});
-        std.os.closeSocket(s);
+        std.posix.close(s);
     }
     if (self.inotify_fd) |fd| {
         for (0..self.nfds_t + self.dir_nfds_t) |inx| {
             const wd = if (inx < self.nfds_t) self.wds[inx].wd else self.dir_wds[inx - self.nfds_t].wd;
-            switch (std.os.errno(std.os.linux.inotify_rm_watch(fd, wd))) {
-                .SUCCESS => {},
-                .BADF => unreachable,
-                // NOTE: Getting EINVAL, but the call looks valid to me?
-                // ...and wait...not all the time?
-                .INVAL => log.err("error removing watch (EINVAL). OS claims fd ({d}) or wd ({d}) is invalid", .{ self.inotify_fd.?, wd }),
-                else => unreachable,
-            }
+            std.posix.inotify_rm_watch(fd, wd);
         }
-        std.os.close(fd);
+        std.posix.close(fd);
     }
     const cwd = std.fs.cwd();
     cwd.deleteFileZ(self.sock_name) catch |e|
@@ -77,12 +70,12 @@ pub fn startWatch(self: *Self) void {
     while (true) {
         self.watch_started = true;
 
-        var fds = if (self.inotify_fd == null)
-            @constCast(&[_]std.os.pollfd{.{ .fd = self.control_socket.?, .events = std.os.POLL.IN, .revents = undefined }})
+        const fds = if (self.inotify_fd == null)
+            @constCast(&[_]std.posix.pollfd{.{ .fd = self.control_socket.?, .events = std.posix.POLL.IN, .revents = undefined }})
         else
-            @constCast(&[_]std.os.pollfd{
-                .{ .fd = self.control_socket.?, .events = std.os.POLL.IN, .revents = undefined },
-                .{ .fd = self.inotify_fd.?, .events = std.os.POLL.IN, .revents = undefined },
+            @constCast(&[_]std.posix.pollfd{
+                .{ .fd = self.control_socket.?, .events = std.posix.POLL.IN, .revents = undefined },
+                .{ .fd = self.inotify_fd.?, .events = std.posix.POLL.IN, .revents = undefined },
             });
 
         const control_fd_inx = 0;
@@ -97,11 +90,11 @@ pub fn startWatch(self: *Self) void {
         // std.fs.watch looks really good...but it requires event based I/O,
         // which is not yet ready to be (re)added.
         log.debug("tid={d} start poll with {d} fds", .{ std.Thread.getCurrentId(), fds.len });
-        if ((std.os.poll(
+        if ((std.posix.poll(
             fds,
             -1, // Infinite timeout
         ) catch @panic("poll error")) > 0) {
-            if (fds[control_fd_inx].revents & std.os.POLL.IN == std.os.POLL.IN) { // POLLIN means "there is data to read"
+            if (fds[control_fd_inx].revents & std.posix.POLL.IN == std.posix.POLL.IN) { // POLLIN means "there is data to read"
                 log.debug("tid={d} control event", .{std.Thread.getCurrentId()});
                 // we only need one byte for what we're doing
                 var control_buf: [1]u8 = undefined;
@@ -109,9 +102,9 @@ pub fn startWatch(self: *Self) void {
                 // self.control_socket_accepted_fd = self.control_socket_accepted_fd orelse acceptSocket(self.control_socket.?);
                 // const fd = self.control_socket_accepted_fd.?; // let's save some typing
                 const fd = acceptSocket(self.sock_name, self.control_socket.?);
-                defer std.os.close(fd);
+                defer std.posix.close(fd);
 
-                var readcount = std.os.recv(fd, &control_buf, 0) catch unreachable;
+                const readcount = std.posix.recv(fd, &control_buf, 0) catch unreachable;
                 // var other_buf: [1]u8 = undefined;
                 // if (std.os.recv(fd, &other_buf, 0) catch unreachable != 0)
                 //     @panic("socket contains more data than expected");
@@ -142,11 +135,11 @@ pub fn startWatch(self: *Self) void {
 
             // fds[1] is inotify, so if we have data in that file descriptor,
             // we can force the data into an inotify_event structure and act on it
-            if (self.inotify_fd != null and fds[inotify_fd_inx].revents & std.os.POLL.IN == std.os.POLL.IN) {
+            if (self.inotify_fd != null and fds[inotify_fd_inx].revents & std.posix.POLL.IN == std.posix.POLL.IN) {
                 log.debug("tid={d} inotify event", .{std.Thread.getCurrentId()});
                 var event_buf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
                 // "borrowed" from https://ziglang.org/documentation/master/std/src/std/fs/watch.zig.html#L588
-                const bytes_read = std.os.read(self.inotify_fd.?, &event_buf) catch unreachable;
+                const bytes_read = std.posix.read(self.inotify_fd.?, &event_buf) catch unreachable;
 
                 var ptr: [*]u8 = &event_buf;
                 const end_ptr = ptr + bytes_read;
@@ -162,11 +155,11 @@ pub fn startWatch(self: *Self) void {
     }
 }
 
-fn acceptSocket(name: [:0]const u8, socket: std.os.socket_t) std.os.socket_t {
+fn acceptSocket(name: [:0]const u8, socket: std.posix.socket_t) std.posix.socket_t {
     var sockaddr = std.net.Address.initUnix(name) catch @panic("could not get sockaddr");
-    var sockaddr_len: std.os.socklen_t = sockaddr.getOsSockLen();
+    var sockaddr_len: std.posix.socklen_t = sockaddr.getOsSockLen();
     log.debug("tid={d} accepting on socket fd {d}", .{ std.Thread.getCurrentId(), socket });
-    return std.os.accept(
+    return std.posix.accept(
         socket,
         &sockaddr.any,
         &sockaddr_len,
@@ -266,16 +259,16 @@ test "nameMatch" {
 /// adds a file to watch. The return will be a handle that will be returned
 /// in the fileChanged event triffered from startWatch
 pub fn addFileWatch(self: *Self, path: *[:0]const u8) !usize {
-    self.inotify_fd = self.inotify_fd orelse try std.os.inotify_init1(std.os.linux.IN.NONBLOCK);
+    self.inotify_fd = self.inotify_fd orelse try std.posix.inotify_init1(std.os.linux.IN.NONBLOCK);
     errdefer {
-        std.os.close(self.inotify_fd.?);
+        std.posix.close(self.inotify_fd.?);
         self.inotify_fd = null;
     }
     // zig build modification pattern: open 20, close_nowrite 10, MOVED_TO (on the directory), attrib 4
     // unix cp: OPEN, MODIFY, CLOSE_WRITE, ATTRIB
     // unix mv: MOVED_TO (on the directory)
     self.wds[self.nfds_t] = .{
-        .wd = try std.os.inotify_add_watchZ(
+        .wd = try std.posix.inotify_add_watchZ(
             self.inotify_fd.?,
             path.*,
             std.os.linux.IN.CLOSE_WRITE,
@@ -302,7 +295,7 @@ fn addDirWatch(self: *Self, path: *[]const u8) !void {
                     return; // We are already watching this directory
     // We do not have a directory watch
     self.dir_wds[self.dir_nfds_t] = .{
-        .wd = try std.os.inotify_add_watch(self.inotify_fd.?, dirname, std.os.linux.IN.MOVED_TO),
+        .wd = try std.posix.inotify_add_watch(self.inotify_fd.?, dirname, std.os.linux.IN.MOVED_TO),
         .path = path, // we store path rather than directory because doing this without an allocator is...tough
     };
     self.dir_nfds_t += 1;
@@ -342,10 +335,10 @@ fn addControlSocket(self: *Self, path: [:0]const u8) !void {
     //
     // This function theoretically should work without requiring linux...except this inotify call,
     // which is completely linux specific
-    self.inotify_fd = self.inotify_fd orelse try std.os.inotify_init1(std.os.linux.IN.NONBLOCK);
+    self.inotify_fd = self.inotify_fd orelse try std.posix.inotify_init1(std.os.linux.IN.NONBLOCK);
     log.debug("Established inotify file descriptor {d}", .{self.inotify_fd.?});
     errdefer {
-        std.os.close(self.inotify_fd.?);
+        std.posix.close(self.inotify_fd.?);
         self.inotify_fd = null;
     }
     // this should work on all systems theoretically, but I believe would work only
@@ -369,18 +362,18 @@ fn addControlSocket(self: *Self, path: [:0]const u8) !void {
     // 6. std.os.close: close the fd
     //
     // On end of use, we need to std.os.closeSocket()
-    const sock = try std.os.socket(
+    const sock = try std.posix.socket(
         std.os.linux.AF.LOCAL,
-        std.os.linux.SOCK.STREAM | std.os.SOCK.CLOEXEC,
+        std.os.linux.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         0,
     );
-    errdefer std.os.closeSocket(sock);
+    errdefer std.posix.close(sock);
 
     const sockaddr = try std.net.Address.initUnix(path);
 
     log.debug("binding to path: {s}", .{path});
-    try std.os.bind(sock, &sockaddr.any, sockaddr.getOsSockLen());
-    try std.os.listen(sock, 10);
+    try std.posix.bind(sock, &sockaddr.any, sockaddr.getOsSockLen());
+    try std.posix.listen(sock, 10);
     self.control_socket = sock;
     log.debug("added control socket with fd={d}", .{sock});
 }

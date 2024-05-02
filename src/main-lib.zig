@@ -24,7 +24,7 @@ const log = std.log.scoped(.@"main-lib");
 // }
 //
 comptime {
-    @export(interface.zigInit, .{ .name = "zigInit", .linkage = .Strong });
+    @export(interface.zigInit, .{ .name = "zigInit", .linkage = .strong });
 }
 
 /// handle_request will be called on a single request, but due to the preservation
@@ -58,32 +58,46 @@ export fn handle_request(request: *interface.Request) callconv(.C) ?*interface.R
 // handleRequest function here is the last line of boilerplate and the
 // entry to a request
 fn handleRequest(allocator: std.mem.Allocator, response: *interface.ZigResponse) !void {
-    _ = allocator;
     // setup
     var response_writer = response.body.writer();
     // real work
-    if (response.request.headers.getFirstValue("host")) |host| {
-        if (std.mem.startsWith(u8, host, "iam")) {
-            try response_writer.print("iam response", .{});
+    for (response.request.headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "host")) {
+            if (std.mem.startsWith(u8, h.value, "iam")) {
+                try response_writer.print("iam response", .{});
+                return;
+            }
+            break;
+        }
+    }
+    for (response.request.headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "x-slow")) {
+            std.time.sleep(std.time.ns_per_ms * (std.fmt.parseInt(usize, h.value, 10) catch 1000));
+            try response_writer.print("i am slow\n\n", .{});
             return;
         }
     }
-    if (response.request.headers.getFirstValue("x-slow")) |ms| {
-        std.time.sleep(std.time.ns_per_ms * (std.fmt.parseInt(usize, ms, 10) catch 1000));
-        try response_writer.print("i am slow\n\n", .{});
-        return;
+    for (response.request.headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "x-log-this")) {
+            try response.writeAll(h.value);
+            break;
+        }
     }
-    if (response.request.headers.getFirstValue("x-log-this")) |l| {
-        try response.writeAll(l);
+    for (response.request.headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "x-status")) {
+            response.status = @enumFromInt(std.fmt.parseInt(u10, h.value, 10) catch 500);
+            break;
+        }
     }
-    if (response.request.headers.getFirstValue("x-status")) |s| {
-        response.status = @enumFromInt(std.fmt.parseInt(u10, s, 10) catch 500);
+    for (response.request.headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "x-throw"))
+            return error.Thrown;
     }
-    if (response.request.headers.getFirstValue("x-throw")) |_| {
-        return error.Thrown;
-    }
-    try response_writer.print(" {d}", .{response.request.headers.list.items.len});
-    try response.headers.append("X-custom-foo", "bar");
+    try response_writer.print(" {d}", .{response.request.headers.len});
+    var headers = std.ArrayList(std.http.Header).init(allocator);
+    try headers.appendSlice(response.headers);
+    try headers.append(.{ .name = "X-custom-foo", .value = "bar" });
+    response.headers = try headers.toOwnedSlice();
 }
 
 test "handle_request" {
@@ -91,7 +105,7 @@ test "handle_request" {
     defer arena.deinit();
     var aa = arena.allocator();
     interface.zigInit(&aa);
-    var headers: []interface.Header = @constCast(&[_]interface.Header{.{
+    const headers: []interface.Header = @constCast(&[_]interface.Header{.{
         .name_ptr = @ptrCast(@constCast("GET".ptr)),
         .name_len = 3,
         .value_ptr = @ptrCast(@constCast("GET".ptr)),
@@ -119,7 +133,7 @@ test "lib can write data directly" {
     defer arena.deinit();
     var aa = arena.allocator();
     interface.zigInit(&aa);
-    var headers: []interface.Header = @constCast(&[_]interface.Header{.{
+    const headers: []interface.Header = @constCast(&[_]interface.Header{.{
         .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
         .name_len = "x-log-this".len,
         .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
@@ -146,7 +160,7 @@ test "lib can write data directly and still throw" {
     defer arena.deinit();
     var aa = arena.allocator();
     interface.zigInit(&aa);
-    var headers: []interface.Header = @constCast(&[_]interface.Header{ .{
+    const headers: []interface.Header = @constCast(&[_]interface.Header{ .{
         .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
         .name_len = "x-log-this".len,
         .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),
@@ -176,7 +190,7 @@ test "lib can set status, update data directly and still throw" {
     defer arena.deinit();
     var aa = arena.allocator();
     interface.zigInit(&aa);
-    var headers: []interface.Header = @constCast(&[_]interface.Header{ .{
+    const headers: []interface.Header = @constCast(&[_]interface.Header{ .{
         .name_ptr = @ptrCast(@constCast("x-log-this".ptr)),
         .name_len = "x-log-this".len,
         .value_ptr = @ptrCast(@constCast("I am a teapot".ptr)),

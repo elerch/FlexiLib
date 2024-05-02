@@ -44,7 +44,7 @@ pub const ZigRequest = struct {
     target: []const u8,
     method: [:0]u8,
     content: []u8,
-    headers: std.http.Headers,
+    headers: []std.http.Header,
 };
 
 pub const ZigHeader = struct {
@@ -56,7 +56,7 @@ pub const ZigResponse = struct {
     status: std.http.Status = .ok,
     reason: ?[]const u8 = null,
     body: *std.ArrayList(u8),
-    headers: std.http.Headers,
+    headers: []std.http.Header,
     request: ZigRequest,
     prepend: std.ArrayList(u8),
 
@@ -94,9 +94,9 @@ pub fn zigInit(parent_allocator: *anyopaque) callconv(.C) void {
 /// Converts a StringHashMap to the structure necessary for passing through the
 /// C boundary. This will be called automatically for you via the handleRequest function
 /// and is also used by the main processing loop to coerce request headers
-fn toHeaders(alloc: std.mem.Allocator, headers: std.http.Headers) ![*]Header {
-    var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.list.items.len);
-    for (headers.list.items) |*field| {
+fn toHeaders(alloc: std.mem.Allocator, headers: []const std.http.Header) ![*]Header {
+    var header_array = try std.ArrayList(Header).initCapacity(alloc, headers.len);
+    for (headers) |*field| {
         header_array.appendAssumeCapacity(.{
             .name_ptr = @constCast(field.name.ptr),
             .name_len = field.name.len,
@@ -114,7 +114,7 @@ fn toHeaders(alloc: std.mem.Allocator, headers: std.http.Headers) ![*]Header {
 pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*Response {
     // TODO: implement another library in C or Rust or something to show
     // that anything using a C ABI can be successful
-    var alloc = if (allocator) |a| a.* else {
+    const alloc = if (allocator) |a| a.* else {
         log.err("zigInit not called prior to handle_request. This is a coding error", .{});
         return null;
     };
@@ -123,12 +123,12 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
     var response = std.ArrayList(u8).init(alloc);
 
     // setup headers
-    var request_headers = std.http.Headers.init(alloc);
+    var request_headers = std.ArrayList(std.http.Header).init(alloc);
     for (0..request.headers_len) |i|
-        request_headers.append(
-            request.headers[i].name_ptr[0..request.headers[i].name_len],
-            request.headers[i].value_ptr[0..request.headers[i].value_len],
-        ) catch |e| {
+        request_headers.append(.{
+            .name = request.headers[i].name_ptr[0..request.headers[i].name_len],
+            .value = request.headers[i].value_ptr[0..request.headers[i].value_len],
+        }) catch |e| {
             log.err("Unexpected error processing request: {any}", .{e});
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
@@ -136,16 +136,22 @@ pub fn handleRequest(request: *Request, zigRequestHandler: ZigRequestHandler) ?*
             return null;
         };
 
-    var prepend = std.ArrayList(u8).init(alloc);
+    const prepend = std.ArrayList(u8).init(alloc);
     var zig_response = ZigResponse{
-        .headers = .{ .allocator = alloc },
+        .headers = &.{},
         .body = &response,
         .prepend = prepend,
         .request = .{
             .content = request.content[0..request.content_len],
             .target = request.target[0..request.target_len],
             .method = request.method[0..request.method_len :0],
-            .headers = request_headers,
+            .headers = request_headers.toOwnedSlice() catch |e| {
+                log.err("Unexpected error processing request: {any}", .{e});
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                return null;
+            },
         },
     };
     zigRequestHandler(
@@ -184,7 +190,7 @@ fn buildResponse(alloc: std.mem.Allocator, zig_response: *ZigResponse) ?*Respons
         }
         return null;
     };
-    rc.headers_len = zig_response.headers.list.items.len;
+    rc.headers_len = zig_response.headers.len;
     rc.status = if (zig_response.status == .ok) 0 else @intFromEnum(zig_response.status);
     rc.reason_len = 0;
     if (zig_response.reason) |*r| {

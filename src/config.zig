@@ -65,17 +65,17 @@ pub fn parse(self: Self, reader: anytype) !ParsedConfig {
         defer self.allocator.free(line);
         const nocomments = std.mem.trim(u8, @constCast(&std.mem.split(u8, line, "#")).first(), ws);
         var data_iterator = std.mem.split(u8, nocomments, "=");
-        var key = std.mem.trim(u8, data_iterator.first(), ws); // first never fails
+        const key = std.mem.trim(u8, data_iterator.first(), ws); // first never fails
         if (key.len == 0) continue;
-        var value = std.mem.trim(u8, data_iterator.next() orelse return error.NoValueForKey, ws);
+        const value = std.mem.trim(u8, data_iterator.next() orelse return error.NoValueForKey, ws);
         // keys should be putNoClobber, but values can be put.
         // Because we have to dup the memory here though, we want to
         // manage duplicate values seperately
-        var dup_key = try self.allocator.dupeZ(u8, key);
-        var dup_value = try self.allocator.dupeZ(u8, value);
+        const dup_key = try self.allocator.dupeZ(u8, key);
+        const dup_value = try self.allocator.dupeZ(u8, value);
         try rc.key_value_map.putNoClobber(dup_key, dup_value);
         if (!rc.value_key_map.contains(value)) {
-            var keys = try self.allocator.create(std.ArrayList([:0]u8));
+            const keys = try self.allocator.create(std.ArrayList([:0]u8));
             keys.* = std.ArrayList([:0]u8).init(self.allocator);
             try rc.value_key_map.put(dup_value, keys);
         }
@@ -85,7 +85,7 @@ pub fn parse(self: Self, reader: anytype) !ParsedConfig {
 }
 
 test "gets config from a stream" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var stream = std.io.fixedBufferStream(
         \\# This is a simple "path prefix" = dynamic library path mapping
         \\  # no reordering will be done, so you must do things most -> least specific
