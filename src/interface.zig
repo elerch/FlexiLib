@@ -57,7 +57,7 @@ pub const ZigResponse = struct {
     status: std.http.Status = .ok,
     reason: ?[]const u8 = null,
     body: *std.ArrayList(u8),
-    headers: []std.http.Header,
+    headers: []const std.http.Header,
     request: ZigRequest,
     prepend: std.ArrayList(u8),
 
