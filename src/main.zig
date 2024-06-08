@@ -397,7 +397,7 @@ pub fn main() !void {
         // panics. This is because arenas don't actually free memory until
         // they deinit. So we need to use the raw allocator here, but the
         // arena can be used to store our arguments above
-        var cp = std.ChildProcess.init(al.items, raw_allocator);
+        var cp = std.process.Child.init(al.items, raw_allocator);
         cp.stdin = stdin;
         cp.stdout = stdout;
         cp.stderr = stderr;
