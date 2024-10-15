@@ -63,8 +63,8 @@ pub fn parse(self: Self, reader: anytype) !ParsedConfig {
     errdefer rc.deinit();
     while (try reader.readUntilDelimiterOrEofAlloc(self.allocator, '\n', std.math.maxInt(usize))) |line| {
         defer self.allocator.free(line);
-        const nocomments = std.mem.trim(u8, @constCast(&std.mem.split(u8, line, "#")).first(), ws);
-        var data_iterator = std.mem.split(u8, nocomments, "=");
+        const nocomments = std.mem.trim(u8, @constCast(&std.mem.splitScalar(u8, line, '#')).first(), ws);
+        var data_iterator = std.mem.splitScalar(u8, nocomments, '=');
         const key = std.mem.trim(u8, data_iterator.first(), ws); // first never fails
         if (key.len == 0) continue;
         const value = std.mem.trim(u8, data_iterator.next() orelse return error.NoValueForKey, ws);

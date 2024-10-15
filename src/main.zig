@@ -207,7 +207,7 @@ fn executorIsMatch(match_data: []const u8, requested_path: []const u8, headers: 
     };
     // Apparently std.mem.split will return an empty first when the haystack starts
     // with the delimiter
-    var split = std.mem.split(u8, std.mem.trim(u8, match_data[colon + 1 ..], "\t "), " ");
+    var split = std.mem.splitScalar(u8, std.mem.trim(u8, match_data[colon + 1 ..], "\t "), ' ');
     const header_value_needle = split.first();
     const path_needle = split.next() orelse {
         std.log.warn(
